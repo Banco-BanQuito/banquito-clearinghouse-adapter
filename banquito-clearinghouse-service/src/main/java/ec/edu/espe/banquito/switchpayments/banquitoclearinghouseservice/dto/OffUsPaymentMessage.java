@@ -4,25 +4,37 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 
 public class OffUsPaymentMessage {
 
+    @NotNull
     private UUID batchId;
 
+    @NotNull
     private UUID transactionId;
 
+    @NotBlank
     private String routingCode;
 
+    @NotBlank
     private String originAccount;
 
+    @NotBlank
     private String destinationAccount;
 
+    @NotNull
+    @DecimalMin(value = "0.01")
     private BigDecimal amount;
 
+    @NotBlank
     private String currency;
 
     private String concept;
 
+    @NotNull
     private LocalDate valueDate;
 
     public UUID getBatchId() {

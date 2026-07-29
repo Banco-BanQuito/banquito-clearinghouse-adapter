@@ -1,5 +1,7 @@
 # banquito-clearinghouse-service
 
+> Nota de arquitectura actual: este microservicio usa Google Cloud Pub/Sub como broker de mensajes administrado. Cualquier referencia historica a RabbitMQ en este README corresponde al diseno anterior y debe interpretarse como obsoleta.
+
 ## Descripción General
 
 **banquito-clearinghouse-service** es el microservicio responsable de gestionar las transacciones **Off-Us** (pagos dirigidos a entidades financieras distintas de BanQuito) dentro del Switch de Pagos Masivos BanQuito V2.
@@ -12,7 +14,7 @@ Su principal responsabilidad es recibir las transacciones Off-Us enviadas por el
 
 Este microservicio realiza las siguientes funciones:
 
-* Consumir transacciones Off-Us desde RabbitMQ.
+* Consumir transacciones Off-Us desde Google Cloud Pub/Sub.
 * Almacenar transacciones Off-Us en MongoDB.
 * Generar archivos de compensación bancaria.
 * Registrar asientos contables asociados a las compensaciones.
