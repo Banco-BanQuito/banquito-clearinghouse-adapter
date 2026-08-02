@@ -2,6 +2,9 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.control
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentAckResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentRequest;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InboundPaymentService;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InterbankPaymentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,6 +27,9 @@ class InterbankPaymentControllerTest {
 
     @Mock
     private InterbankPaymentService interbankPaymentService;
+
+    @Mock
+    private InboundPaymentService inboundPaymentService;
 
     @InjectMocks
     private InterbankPaymentController interbankPaymentController;
@@ -90,6 +97,52 @@ class InterbankPaymentControllerTest {
         assertThatThrownBy(() -> interbankPaymentController.receive(request))
                 .isInstanceOf(IllegalArgumentException.class);
         org.mockito.Mockito.verifyNoInteractions(interbankPaymentService);
+    }
+
+    @Test
+    void statusByUetr_debeRetornar200ConElStatus_cuandoExiste() {
+        String uetr = UUID.randomUUID().toString();
+        InterbankPaymentStatusResponse expected = new InterbankPaymentStatusResponse(
+                uetr, "002", "PICHINCHA-TX-1", "ACSC", "tx-123", null,
+                LocalDateTime.of(2026, 8, 2, 10, 0));
+        when(inboundPaymentService.getStatusByUetr(uetr)).thenReturn(expected);
+
+        ResponseEntity<InterbankPaymentStatusResponse> response = interbankPaymentController.statusByUetr(uetr);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isEqualTo(expected);
+    }
+
+    @Test
+    void statusByUetr_debePropagarNotFound_cuandoNoExiste() {
+        String uetr = UUID.randomUUID().toString();
+        when(inboundPaymentService.getStatusByUetr(uetr))
+                .thenThrow(new InboundPaymentNotFoundException("No existe un pago interbancario con uetr=" + uetr));
+
+        assertThatThrownBy(() -> interbankPaymentController.statusByUetr(uetr))
+                .isInstanceOf(InboundPaymentNotFoundException.class);
+    }
+
+    @Test
+    void statusByOriginTransaction_debeRetornar200ConElStatus_cuandoExiste() {
+        InterbankPaymentStatusResponse expected = new InterbankPaymentStatusResponse(
+                null, "002", "PICHINCHA-TX-1", "PDNG", "tx-123", null, null);
+        when(inboundPaymentService.getStatusByOriginTransaction("002", "PICHINCHA-TX-1")).thenReturn(expected);
+
+        ResponseEntity<InterbankPaymentStatusResponse> response =
+                interbankPaymentController.statusByOriginTransaction("002", "PICHINCHA-TX-1");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isEqualTo(expected);
+    }
+
+    @Test
+    void statusByOriginTransaction_debePropagarNotFound_cuandoNoExiste() {
+        when(inboundPaymentService.getStatusByOriginTransaction("999", "no-existe"))
+                .thenThrow(new InboundPaymentNotFoundException("No existe"));
+
+        assertThatThrownBy(() -> interbankPaymentController.statusByOriginTransaction("999", "no-existe"))
+                .isInstanceOf(InboundPaymentNotFoundException.class);
     }
 
     private InterbankPaymentRequest validRequest() {

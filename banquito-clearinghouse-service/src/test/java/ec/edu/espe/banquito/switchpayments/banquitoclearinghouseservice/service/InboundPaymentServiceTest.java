@@ -3,8 +3,10 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundPaymentMessage;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.InboundPaymentStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundCompensatedException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.InboundPayment;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.InboundCreditProvider;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.InboundPaymentRepository;
@@ -16,10 +18,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.Month;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -358,6 +362,118 @@ class InboundPaymentServiceTest {
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getBanquitoTransactionId()).isEqualTo(admission.payment().getBanquitoTransactionId());
+    }
+
+    @Test
+    void getStatusByUetr_debeMapearACSC_cuandoPagoEstaCREDITED() {
+        inboundPaymentService = service();
+        InboundPayment payment = new InboundPayment();
+        payment.setUetr("11111111-1111-4111-8111-111111111111");
+        payment.setOriginBankCode("002");
+        payment.setOriginTransactionId("PICHINCHA-TX-1");
+        payment.setBanquitoTransactionId("tx-123");
+        payment.setStatus(InboundPaymentStatus.CREDITED);
+        payment.setUpdatedAt(LocalDateTime.of(2026, 8, 2, 10, 0));
+        when(inboundPaymentRepository.findFirstByUetr("11111111-1111-4111-8111-111111111111"))
+                .thenReturn(Optional.of(payment));
+
+        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("11111111-1111-4111-8111-111111111111");
+
+        assertThat(response.status()).isEqualTo("ACSC");
+        assertThat(response.banquitoTransactionId()).isEqualTo("tx-123");
+        assertThat(response.failureMessage()).isNull();
+        assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 2, 10, 0));
+    }
+
+    @Test
+    void getStatusByUetr_debeMapearPDNG_cuandoPagoEstaRECEIVED() {
+        inboundPaymentService = service();
+        InboundPayment payment = new InboundPayment();
+        payment.setUetr("22222222-2222-4222-8222-222222222222");
+        payment.setStatus(InboundPaymentStatus.RECEIVED);
+        when(inboundPaymentRepository.findFirstByUetr("22222222-2222-4222-8222-222222222222"))
+                .thenReturn(Optional.of(payment));
+
+        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("22222222-2222-4222-8222-222222222222");
+
+        assertThat(response.status()).isEqualTo("PDNG");
+        assertThat(response.failureMessage()).isNull();
+    }
+
+    @Test
+    void getStatusByUetr_debeMapearRJCT_yMensajeReintentable_cuandoPagoEstaFAILED() {
+        inboundPaymentService = service();
+        InboundPayment payment = new InboundPayment();
+        payment.setUetr("33333333-3333-4333-8333-333333333333");
+        payment.setStatus(InboundPaymentStatus.FAILED);
+        payment.setFailureMessage("El banco corresponsal 999 no existe en el catálogo.");
+        when(inboundPaymentRepository.findFirstByUetr("33333333-3333-4333-8333-333333333333"))
+                .thenReturn(Optional.of(payment));
+
+        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("33333333-3333-4333-8333-333333333333");
+
+        assertThat(response.status()).isEqualTo("RJCT");
+        // el mensaje interno crudo (con detalle del banco corresponsal) nunca debe exponerse
+        // tal cual a un banco externo: solo un motivo generico que indica que es reintentable.
+        assertThat(response.failureMessage())
+                .doesNotContain("999")
+                .contains("reintentarse");
+    }
+
+    @Test
+    void getStatusByUetr_debeMapearRJCT_yMensajeReintentable_cuandoPagoEstaCOMPENSATED() {
+        inboundPaymentService = service();
+        InboundPayment payment = new InboundPayment();
+        payment.setUetr("44444444-4444-4444-8444-444444444444");
+        payment.setStatus(InboundPaymentStatus.COMPENSATED);
+        payment.setFailureMessage("Delivery rechazado, asiento INBOUND revertido");
+        when(inboundPaymentRepository.findFirstByUetr("44444444-4444-4444-8444-444444444444"))
+                .thenReturn(Optional.of(payment));
+
+        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("44444444-4444-4444-8444-444444444444");
+
+        assertThat(response.status()).isEqualTo("RJCT");
+        assertThat(response.failureMessage())
+                .doesNotContain("Delivery rechazado")
+                .contains("reintentarse");
+    }
+
+    @Test
+    void getStatusByUetr_debeLanzarNotFound_cuandoUetrNoExiste() {
+        inboundPaymentService = service();
+        when(inboundPaymentRepository.findFirstByUetr("no-existe")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inboundPaymentService.getStatusByUetr("no-existe"))
+                .isInstanceOf(InboundPaymentNotFoundException.class);
+    }
+
+    @Test
+    void getStatusByOriginTransaction_debeRetornarStatus_cuandoExiste() {
+        inboundPaymentService = service();
+        InboundPayment payment = new InboundPayment();
+        payment.setOriginBankCode("002");
+        payment.setOriginTransactionId("PICHINCHA-TX-1");
+        payment.setBanquitoTransactionId("tx-123");
+        payment.setStatus(InboundPaymentStatus.CREDITED);
+        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-1"))
+                .thenReturn(Optional.of(payment));
+
+        InterbankPaymentStatusResponse response =
+                inboundPaymentService.getStatusByOriginTransaction("002", "PICHINCHA-TX-1");
+
+        assertThat(response.originBankCode()).isEqualTo("002");
+        assertThat(response.originTransactionId()).isEqualTo("PICHINCHA-TX-1");
+        assertThat(response.status()).isEqualTo("ACSC");
+    }
+
+    @Test
+    void getStatusByOriginTransaction_debeLanzarNotFound_cuandoNoExiste() {
+        inboundPaymentService = service();
+        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("999", "no-existe"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inboundPaymentService.getStatusByOriginTransaction("999", "no-existe"))
+                .isInstanceOf(InboundPaymentNotFoundException.class);
     }
 
     private InboundPaymentMessage message(String originBankCode, String originTransactionId,

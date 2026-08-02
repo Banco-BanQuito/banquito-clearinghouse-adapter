@@ -113,6 +113,7 @@ public class InboundPaymentService {
                 payment.setAttemptCount(nextAttempt);
                 payment.setStatus(InboundPaymentStatus.RECEIVED);
                 payment.setFailureMessage(null);
+                payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
                 payment = inboundPaymentRepository.save(payment);
                 yield credit(payment, nextAttempt);
             }
@@ -149,7 +150,9 @@ public class InboundPaymentService {
                 deriveBanquitoTransactionId(message.getOriginBankCode(), message.getOriginTransactionId()));
         payment.setStatus(InboundPaymentStatus.RECEIVED);
         payment.setAttemptCount(1);
-        payment.setCreatedAt(LocalDateTime.now(ZoneId.systemDefault()));
+        LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
+        payment.setCreatedAt(now);
+        payment.setUpdatedAt(now);
         return inboundPaymentRepository.save(payment);
     }
 
@@ -165,6 +168,7 @@ public class InboundPaymentService {
         try {
             inboundCreditProvider.registerInboundCredit(request);
             payment.setStatus(InboundPaymentStatus.CREDITED);
+            payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
             return inboundPaymentRepository.save(payment);
         } catch (InboundCompensatedException ex) {
             // account-core-service ya reverso lo que alcanzo a contabilizar bajo el
@@ -172,6 +176,7 @@ public class InboundPaymentService {
             // reutilizarse en un proximo reintento (ver InboundPaymentStatus).
             payment.setStatus(InboundPaymentStatus.COMPENSATED);
             payment.setFailureMessage(ex.getMessage());
+            payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
             log.error("Fallo compensado el credito del pago entrante {}/{} (intento {}): {}",
                     payment.getOriginBankCode(), payment.getOriginTransactionId(), attemptNumber, ex.getMessage());
             return inboundPaymentRepository.save(payment);
@@ -181,6 +186,7 @@ public class InboundPaymentService {
             // idempotencyKey puede reutilizarse en un proximo reintento.
             payment.setStatus(InboundPaymentStatus.FAILED);
             payment.setFailureMessage(ex.getMessage());
+            payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
             log.error("Fallo el credito del pago entrante {}/{} (intento {}): {}",
                     payment.getOriginBankCode(), payment.getOriginTransactionId(), attemptNumber, ex.getMessage());
             return inboundPaymentRepository.save(payment);
@@ -222,7 +228,8 @@ public class InboundPaymentService {
                 payment.getOriginTransactionId(),
                 toIso20022Status(payment.getStatus()),
                 payment.getBanquitoTransactionId(),
-                toExternalFailureMessage(payment.getStatus()));
+                toExternalFailureMessage(payment.getStatus()),
+                payment.getUpdatedAt());
     }
 
     /**

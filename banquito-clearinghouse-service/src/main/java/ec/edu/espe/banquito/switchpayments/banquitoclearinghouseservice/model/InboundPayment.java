@@ -48,6 +48,14 @@ public class InboundPayment {
     private LocalDateTime createdAt;
 
     /**
+     * Fase 4 Parte 4: momento del ultimo cambio de estado (creacion, o cada transicion en
+     * process()/credit()). Permite al banco origen, al consultar el status, distinguir un
+     * PDNG "recien admitido, en curso" de uno "colgado desde hace horas" -- createdAt por si
+     * solo no sirve para eso porque nunca se actualiza en reintentos.
+     */
+    private LocalDateTime updatedAt;
+
+    /**
      * Fase 4 Parte 2: numero de intento de credito para esta (originBankCode,
      * originTransactionId), empezando en 1. Se incrementa cada vez que se reintenta
      * despues de que el intento anterior quedo en COMPENSATED, y determina el sufijo del
@@ -168,6 +176,14 @@ public class InboundPayment {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
     }
 
     public int getAttemptCount() {
