@@ -2,8 +2,10 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundPaymentMessage;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.InboundPaymentStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundCompensatedException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.InboundPayment;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.InboundCreditProvider;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.InboundPaymentRepository;
@@ -183,6 +185,67 @@ public class InboundPaymentService {
                     payment.getOriginBankCode(), payment.getOriginTransactionId(), attemptNumber, ex.getMessage());
             return inboundPaymentRepository.save(payment);
         }
+    }
+
+    /**
+     * Fase 4 Parte 4 (consulta de estado, pull): el banco origen reintenta un envio sin
+     * saber si ya fue admitido consultando aqui primero, por uetr. Traduce InboundPaymentStatus
+     * (dominio interno) a codigo ISO 20022 (RECEIVED->PDNG, CREDITED->ACSC,
+     * FAILED/COMPENSATED->RJCT: ambos terminan sin credito bajo la clave de ese intento,
+     * indistinguibles de cara al banco origen).
+     */
+    public InterbankPaymentStatusResponse getStatusByUetr(String uetr) {
+        InboundPayment payment = inboundPaymentRepository.findFirstByUetr(uetr)
+                .orElseThrow(() -> new InboundPaymentNotFoundException(
+                        "No existe un pago interbancario con uetr=" + uetr));
+        return toStatusResponse(payment);
+    }
+
+    /**
+     * Respaldo para bancos que no conocen/no propagan el uetr en su reintento y solo tienen
+     * su propio (originBankCode, originTransactionId) -- misma clave de dedupe que usa
+     * process()/admit().
+     */
+    public InterbankPaymentStatusResponse getStatusByOriginTransaction(String originBankCode, String originTransactionId) {
+        InboundPayment payment = inboundPaymentRepository
+                .findFirstByOriginBankCodeAndOriginTransactionId(originBankCode, originTransactionId)
+                .orElseThrow(() -> new InboundPaymentNotFoundException(
+                        "No existe un pago interbancario con originBankCode=" + originBankCode
+                                + " y originTransactionId=" + originTransactionId));
+        return toStatusResponse(payment);
+    }
+
+    private InterbankPaymentStatusResponse toStatusResponse(InboundPayment payment) {
+        return new InterbankPaymentStatusResponse(
+                payment.getUetr(),
+                payment.getOriginBankCode(),
+                payment.getOriginTransactionId(),
+                toIso20022Status(payment.getStatus()),
+                payment.getBanquitoTransactionId(),
+                toExternalFailureMessage(payment.getStatus()));
+    }
+
+    /**
+     * failureMessage interno (InboundPayment.failureMessage) puede contener el mensaje crudo
+     * de excepciones de account-core-service/accounting-service (nombres de tabla, causas
+     * internas) -- nunca se expone tal cual a un banco externo via el endpoint de status. Solo
+     * se comunica un motivo generico segun el estado; el detalle real queda en logs (ver
+     * credit()) para diagnostico interno.
+     */
+    private String toExternalFailureMessage(InboundPaymentStatus status) {
+        return switch (status) {
+            case FAILED -> "El pago no pudo acreditarse; puede reintentarse con el mismo identificador.";
+            case COMPENSATED -> "El pago no pudo acreditarse y fue revertido; puede reintentarse con el mismo identificador.";
+            case RECEIVED, CREDITED -> null;
+        };
+    }
+
+    private String toIso20022Status(InboundPaymentStatus status) {
+        return switch (status) {
+            case RECEIVED -> "PDNG";
+            case CREDITED -> "ACSC";
+            case FAILED, COMPENSATED -> "RJCT";
+        };
     }
 
     static String deriveBanquitoTransactionId(String originBankCode, String originTransactionId) {

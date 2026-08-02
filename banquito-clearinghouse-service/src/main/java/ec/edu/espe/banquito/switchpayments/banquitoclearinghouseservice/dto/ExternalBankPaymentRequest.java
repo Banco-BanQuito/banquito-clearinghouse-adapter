@@ -13,6 +13,9 @@ public record ExternalBankPaymentRequest(
         BigDecimal amount,
         String currency,
         String concept,
-        LocalDate valueDate
+        LocalDate valueDate,
+        String beneficiaryName,
+        String beneficiaryIdentification,
+        String beneficiaryEmail
 ) {
 }

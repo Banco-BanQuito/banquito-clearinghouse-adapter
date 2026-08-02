@@ -22,6 +22,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
     }
 
+    @ExceptionHandler(InboundPaymentNotFoundException.class)
+    public ResponseEntity<String> handleInboundPaymentNotFound(InboundPaymentNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+    }
+
     @ExceptionHandler(BankConnectivityAlreadyExistsException.class)
     public ResponseEntity<String> handleBankConnectivityAlreadyExists(BankConnectivityAlreadyExistsException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getMessage());

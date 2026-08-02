@@ -37,6 +37,12 @@ public class OffUsPaymentMessage {
     @NotNull
     private LocalDate valueDate;
 
+    private String beneficiaryName;
+
+    private String beneficiaryIdentification;
+
+    private String beneficiaryEmail;
+
     public UUID getBatchId() {
         return batchId;
     }
@@ -107,5 +113,29 @@ public class OffUsPaymentMessage {
 
     public void setValueDate(LocalDate valueDate) {
         this.valueDate = valueDate;
+    }
+
+    public String getBeneficiaryName() {
+        return beneficiaryName;
+    }
+
+    public void setBeneficiaryName(String beneficiaryName) {
+        this.beneficiaryName = beneficiaryName;
+    }
+
+    public String getBeneficiaryIdentification() {
+        return beneficiaryIdentification;
+    }
+
+    public void setBeneficiaryIdentification(String beneficiaryIdentification) {
+        this.beneficiaryIdentification = beneficiaryIdentification;
+    }
+
+    public String getBeneficiaryEmail() {
+        return beneficiaryEmail;
+    }
+
+    public void setBeneficiaryEmail(String beneficiaryEmail) {
+        this.beneficiaryEmail = beneficiaryEmail;
     }
 }

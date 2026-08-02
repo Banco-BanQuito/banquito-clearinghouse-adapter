@@ -14,6 +14,8 @@ public class ClearingBankProperties {
 
     private Banquil banquil = new Banquil();
 
+    private Mateo mateo = new Mateo();
+
     public String getOwnRoutingCode() {
         return ownRoutingCode;
     }
@@ -28,6 +30,14 @@ public class ClearingBankProperties {
 
     public void setBanquil(Banquil banquil) {
         this.banquil = banquil;
+    }
+
+    public Mateo getMateo() {
+        return mateo;
+    }
+
+    public void setMateo(Mateo mateo) {
+        this.mateo = mateo;
     }
 
     public static class Banquil {
@@ -77,6 +87,54 @@ public class ClearingBankProperties {
 
         public void setApiKeyHeaderName(String apiKeyHeaderName) {
             this.apiKeyHeaderName = apiKeyHeaderName;
+        }
+
+        public String getBearerToken() {
+            return bearerToken;
+        }
+
+        public void setBearerToken(String bearerToken) {
+            this.bearerToken = bearerToken;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(int timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
+    public static class Mateo {
+        private String bankCode = "MATEO";
+        private List<String> routingCodes = new ArrayList<>(List.of("003"));
+        private String endpointUrl = "http://localhost:8090/api/v1/switch-core/payment-reservations/consume";
+        private String bearerToken = "";
+        private int timeoutSeconds = 10;
+
+        public String getBankCode() {
+            return bankCode;
+        }
+
+        public void setBankCode(String bankCode) {
+            this.bankCode = bankCode;
+        }
+
+        public List<String> getRoutingCodes() {
+            return routingCodes;
+        }
+
+        public void setRoutingCodes(List<String> routingCodes) {
+            this.routingCodes = routingCodes;
+        }
+
+        public String getEndpointUrl() {
+            return endpointUrl;
+        }
+
+        public void setEndpointUrl(String endpointUrl) {
+            this.endpointUrl = endpointUrl;
         }
 
         public String getBearerToken() {

@@ -71,6 +71,9 @@ public class OffUsConsumerService {
         payment.setAmount(message.getAmount());
         payment.setCurrency(message.getCurrency());
         payment.setValueDate(message.getValueDate());
+        payment.setBeneficiaryName(message.getBeneficiaryName());
+        payment.setBeneficiaryIdentification(message.getBeneficiaryIdentification());
+        payment.setBeneficiaryEmail(message.getBeneficiaryEmail());
         payment.setSettlementStatus(SettlementStatus.PENDING);
         payment.setCreatedAt(LocalDateTime.now(ZoneId.systemDefault()));
         payment.setRoutedAt(LocalDateTime.now(ZoneId.systemDefault()));
@@ -125,7 +128,10 @@ public class OffUsConsumerService {
                 message.getAmount(),
                 message.getCurrency(),
                 message.getConcept(),
-                message.getValueDate()
+                message.getValueDate(),
+                message.getBeneficiaryName(),
+                message.getBeneficiaryIdentification(),
+                message.getBeneficiaryEmail()
         );
     }
 }

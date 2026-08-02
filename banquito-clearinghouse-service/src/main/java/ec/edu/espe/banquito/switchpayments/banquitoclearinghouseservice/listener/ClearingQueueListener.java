@@ -90,6 +90,9 @@ public class ClearingQueueListener {
         message.setCurrency("USD");
         message.setConcept(line.reference());
         message.setValueDate(LocalDate.now());
+        message.setBeneficiaryName(line.beneficiaryName());
+        message.setBeneficiaryIdentification(line.beneficiaryIdentification());
+        message.setBeneficiaryEmail(line.beneficiaryEmail());
         return message;
     }
 }

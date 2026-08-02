@@ -1,4 +1,4 @@
-package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider;
+package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.externalbank;
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.config.ClearingBankProperties;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentRequest;

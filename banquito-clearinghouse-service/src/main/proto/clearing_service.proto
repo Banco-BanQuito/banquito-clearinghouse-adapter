@@ -21,6 +21,9 @@ message OffUsPaymentRequest {
   string currency = 7;
   string concept = 8;
   string value_date = 9;
+  string beneficiary_name = 10;
+  string beneficiary_identification = 11;
+  string beneficiary_email = 12;
 }
 
 message OffUsPaymentResponse {

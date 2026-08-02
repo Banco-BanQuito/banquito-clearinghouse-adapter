@@ -33,6 +33,12 @@ public class OffUsPayment {
 
     private LocalDate valueDate;
 
+    private String beneficiaryName;
+
+    private String beneficiaryIdentification;
+
+    private String beneficiaryEmail;
+
     private PaymentStatus status;
 
     private SettlementStatus settlementStatus;
@@ -127,6 +133,30 @@ public class OffUsPayment {
 
     public void setValueDate(LocalDate valueDate) {
         this.valueDate = valueDate;
+    }
+
+    public String getBeneficiaryName() {
+        return beneficiaryName;
+    }
+
+    public void setBeneficiaryName(String beneficiaryName) {
+        this.beneficiaryName = beneficiaryName;
+    }
+
+    public String getBeneficiaryIdentification() {
+        return beneficiaryIdentification;
+    }
+
+    public void setBeneficiaryIdentification(String beneficiaryIdentification) {
+        this.beneficiaryIdentification = beneficiaryIdentification;
+    }
+
+    public String getBeneficiaryEmail() {
+        return beneficiaryEmail;
+    }
+
+    public void setBeneficiaryEmail(String beneficiaryEmail) {
+        this.beneficiaryEmail = beneficiaryEmail;
     }
 
     public PaymentStatus getStatus() {

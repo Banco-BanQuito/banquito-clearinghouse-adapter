@@ -26,7 +26,10 @@ class BanquilMockControllerTest {
                 new BigDecimal("25.50"),
                 "USD",
                 "Pago OFF-US",
-                LocalDate.of(2026, 7, 24)
+                LocalDate.of(2026, 7, 24),
+                "Juan Perez",
+                "0102030405",
+                "juan.perez@correo.com"
         );
 
         ResponseEntity<ExternalBankPaymentResponse> response = controller.receivePayment(request);

@@ -67,6 +67,9 @@ public class ClearingGrpcService extends ClearingServiceGrpc.ClearingServiceImpl
         message.setCurrency(required(request.getCurrency(), "currency"));
         message.setConcept(request.getConcept());
         message.setValueDate(LocalDate.parse(required(request.getValueDate(), "value_date")));
+        message.setBeneficiaryName(request.getBeneficiaryName());
+        message.setBeneficiaryIdentification(request.getBeneficiaryIdentification());
+        message.setBeneficiaryEmail(request.getBeneficiaryEmail());
         return message;
     }
 

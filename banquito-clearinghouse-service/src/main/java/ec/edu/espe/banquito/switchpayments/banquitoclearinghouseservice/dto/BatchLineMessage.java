@@ -26,5 +26,7 @@ public record BatchLineMessage(
         @JsonProperty("beneficiary_name")
         String beneficiaryName,
         @JsonProperty("beneficiary_email")
-        String beneficiaryEmail) {
+        String beneficiaryEmail,
+        @JsonProperty("beneficiary_identification")
+        String beneficiaryIdentification) {
 }

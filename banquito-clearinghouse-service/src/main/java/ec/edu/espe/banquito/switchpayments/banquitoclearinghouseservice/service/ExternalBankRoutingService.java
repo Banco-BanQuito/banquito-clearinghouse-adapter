@@ -4,7 +4,7 @@ import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.config.C
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.ExternalBankRoutingException;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.ExternalBankClient;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.externalbank.ExternalBankClient;
 import org.springframework.stereotype.Service;
 
 import java.util.List;

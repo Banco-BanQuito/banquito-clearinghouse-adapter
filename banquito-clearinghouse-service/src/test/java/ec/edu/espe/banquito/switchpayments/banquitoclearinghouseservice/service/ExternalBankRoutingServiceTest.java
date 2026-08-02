@@ -4,7 +4,7 @@ import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.config.C
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.ExternalBankRoutingException;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.ExternalBankClient;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.externalbank.ExternalBankClient;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -74,7 +74,10 @@ class ExternalBankRoutingServiceTest {
                 new BigDecimal("25.50"),
                 "USD",
                 "Pago OFF-US",
-                LocalDate.of(2026, 7, 24)
+                LocalDate.of(2026, 7, 24),
+                "Juan Perez",
+                "0102030405",
+                "juan.perez@correo.com"
         );
     }
 }
