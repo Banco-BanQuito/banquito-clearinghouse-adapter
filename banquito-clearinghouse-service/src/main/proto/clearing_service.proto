@@ -8,6 +8,7 @@ option java_outer_classname = "ClearingServiceProto";
 
 service ClearingService {
   rpc RegisterOffUsPayment(OffUsPaymentRequest) returns (OffUsPaymentResponse);
+  rpc ReceiveInboundPayment(InboundPaymentRequest) returns (InboundPaymentResponse);
 }
 
 message OffUsPaymentRequest {
@@ -27,4 +28,21 @@ message OffUsPaymentResponse {
   string batch_id = 2;
   string transaction_id = 3;
   string message = 4;
+}
+
+message InboundPaymentRequest {
+  string origin_bank_code = 1;
+  string origin_transaction_id = 2;
+  string destination_account_number = 3;
+  string amount = 4;
+  string currency = 5;
+  string concept = 6;
+  string beneficiary_name = 7;
+  string value_date = 8;
+}
+
+message InboundPaymentResponse {
+  string status = 1;                  // ACCEPTED | REJECTED
+  string banquito_transaction_id = 2;
+  string message = 3;
 }

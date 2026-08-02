@@ -7,6 +7,8 @@ public class OffUsSettlementRequest {
     private String batchId;
     private BigDecimal amount;
     private String transactionUuid;
+    private String bankCode;
+    private String transactionId;
 
     public String getBatchId() {
         return batchId;
@@ -30,5 +32,21 @@ public class OffUsSettlementRequest {
 
     public void setTransactionUuid(String transactionUuid) {
         this.transactionUuid = transactionUuid;
+    }
+
+    public String getBankCode() {
+        return bankCode;
+    }
+
+    public void setBankCode(String bankCode) {
+        this.bankCode = bankCode;
+    }
+
+    public String getTransactionId() {
+        return transactionId;
+    }
+
+    public void setTransactionId(String transactionId) {
+        this.transactionId = transactionId;
     }
 }

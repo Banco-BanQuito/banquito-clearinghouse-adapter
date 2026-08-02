@@ -87,6 +87,10 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -98,6 +102,11 @@
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-pubsub</artifactId>
             <version>1.134.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-secretmanager</artifactId>
+            <version>2.58.0</version>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>

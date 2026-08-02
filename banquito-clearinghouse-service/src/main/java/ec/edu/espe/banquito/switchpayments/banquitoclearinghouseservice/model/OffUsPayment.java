@@ -1,6 +1,7 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model;
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.PaymentStatus;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.SettlementStatus;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -33,6 +34,8 @@ public class OffUsPayment {
     private LocalDate valueDate;
 
     private PaymentStatus status;
+
+    private SettlementStatus settlementStatus;
 
     private LocalDateTime createdAt;
 
@@ -122,6 +125,14 @@ public class OffUsPayment {
 
     public void setStatus(PaymentStatus status) {
         this.status = status;
+    }
+
+    public SettlementStatus getSettlementStatus() {
+        return settlementStatus;
+    }
+
+    public void setSettlementStatus(SettlementStatus settlementStatus) {
+        this.settlementStatus = settlementStatus;
     }
 
     public LocalDateTime getCreatedAt() {

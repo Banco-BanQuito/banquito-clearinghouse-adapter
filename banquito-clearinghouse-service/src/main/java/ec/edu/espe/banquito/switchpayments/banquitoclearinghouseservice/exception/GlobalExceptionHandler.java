@@ -16,4 +16,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleFileGeneration(FileGenerationException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
     }
+
+    @ExceptionHandler(BankConnectivityNotFoundException.class)
+    public ResponseEntity<String> handleBankConnectivityNotFound(BankConnectivityNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+    }
+
+    @ExceptionHandler(BankConnectivityAlreadyExistsException.class)
+    public ResponseEntity<String> handleBankConnectivityAlreadyExists(BankConnectivityAlreadyExistsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getMessage());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<String> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ex.getMessage());
+    }
+
+    @ExceptionHandler(SecretResolutionException.class)
+    public ResponseEntity<String> handleSecretResolution(SecretResolutionException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ex.getMessage());
+    }
 }

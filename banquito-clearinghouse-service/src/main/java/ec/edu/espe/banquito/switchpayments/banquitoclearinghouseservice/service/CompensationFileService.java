@@ -1,7 +1,6 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service;
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.PaymentStatus;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.AccountingIntegrationException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.FileGenerationException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.CompensationFile;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.OffUsPayment;
@@ -39,18 +38,15 @@ public class CompensationFileService {
 
     private final OffUsPaymentRepository offUsPaymentRepository;
     private final CompensationFileRepository compensationFileRepository;
-    private final CoreSettlementService coreSettlementService;
     private final String outputDir;
 
     public CompensationFileService(
             OffUsPaymentRepository offUsPaymentRepository,
             CompensationFileRepository compensationFileRepository,
-            CoreSettlementService coreSettlementService,
             @Value("${compensation.output.dir:}") String outputDir) {
 
         this.offUsPaymentRepository = offUsPaymentRepository;
         this.compensationFileRepository = compensationFileRepository;
-        this.coreSettlementService = coreSettlementService;
         this.outputDir = outputDir != null ? outputDir.trim() : "";
     }
 
@@ -85,8 +81,9 @@ public class CompensationFileService {
 
             compensationFileRepository.save(file);
 
-            callAccountingService(batchId, total);
-
+            // La contabilizacion ya NO ocurre aqui: se registra por transaccion individual en
+            // OffUsConsumerService al recibir cada pago. Este metodo solo genera el archivo
+            // hacia el Banco Central simulado (ADR-001).
             return file;
 
         } catch (IOException e) {
@@ -142,7 +139,7 @@ public class CompensationFileService {
             compensationFileRepository.save(file);
 
             for (OffUsPayment payment : pendingPayments) {
-                payment.setStatus(PaymentStatus.ACCOUNTED);
+                payment.setStatus(PaymentStatus.FILE_GENERATED);
             }
             offUsPaymentRepository.saveAll(pendingPayments);
 
@@ -419,17 +416,6 @@ public class CompensationFileService {
         file.setFileType("LOTE");
 
         return file;
-    }
-
-    private void callAccountingService(UUID batchId, BigDecimal total) {
-        try {
-            coreSettlementService.registerOffUsSettlement(batchId, total);
-        } catch (Exception ex) {
-            throw new AccountingIntegrationException(
-                    "Error registrando asiento contable: " + ex.getMessage(),
-                    ex
-            );
-        }
     }
 
     private String buildLine(OffUsPayment p) {

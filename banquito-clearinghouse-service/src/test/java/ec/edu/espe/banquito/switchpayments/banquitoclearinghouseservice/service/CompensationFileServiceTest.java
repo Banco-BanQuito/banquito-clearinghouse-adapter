@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +37,10 @@ class CompensationFileServiceTest {
     @Mock
     private CompensationFileRepository compensationFileRepository;
 
+    // No es dependencia de CompensationFileService (la contabilizacion se movio a
+    // OffUsConsumerService, por transaccion individual). Se mockea aqui solo para
+    // dejar explicito, con verifyNoInteractions, que generar archivos NUNCA dispara
+    // liquidacion contable.
     @Mock
     private CoreSettlementService coreSettlementService;
 
@@ -47,7 +52,7 @@ class CompensationFileServiceTest {
         tempDir = new File(System.getProperty("java.io.tmpdir"), "clearing-test-" + UUID.randomUUID());
         tempDir.mkdirs();
         compensationFileService = new CompensationFileService(
-                offUsPaymentRepository, compensationFileRepository, coreSettlementService, tempDir.getAbsolutePath());
+                offUsPaymentRepository, compensationFileRepository, tempDir.getAbsolutePath());
     }
 
     @Test
@@ -114,6 +119,25 @@ class CompensationFileServiceTest {
 
         verify(compensationFileRepository).save(any(CompensationFile.class));
         verify(offUsPaymentRepository).saveAll(any());
+    }
+
+    @Test
+    void generacionDeArchivos_nuncaDisparaLiquidacionContable() {
+        // La contabilizacion ahora ocurre por transaccion individual en OffUsConsumerService.
+        // Este servicio solo genera archivos/reportes para el Banco Central simulado y no debe
+        // tener ninguna interaccion con la liquidacion contable (CoreSettlementService).
+        OffUsPayment payment = buildPayment();
+        when(offUsPaymentRepository.findByBatchId(any())).thenReturn(List.of(payment));
+        when(offUsPaymentRepository.findByStatus(any())).thenReturn(List.of(payment));
+        when(compensationFileRepository.findAllByFileTypeAndPeriodFrom(anyString(), any()))
+                .thenReturn(Collections.emptyList());
+        when(offUsPaymentRepository.findByCreatedAtBetween(any(), any())).thenReturn(List.of(payment));
+
+        compensationFileService.generateCompensationFile(UUID.randomUUID());
+        compensationFileService.generateSpiFile();
+        compensationFileService.generateConsolidatedFile(LocalDate.of(2026, Month.JUNE, 20));
+
+        verifyNoInteractions(coreSettlementService);
     }
 
     @Test
