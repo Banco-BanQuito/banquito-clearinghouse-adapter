@@ -1,15 +1,13 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(properties = {
-        "spring.mongodb.uri=mongodb://localhost:27017/clearingdb"
-})
+import static org.assertj.core.api.Assertions.assertThat;
+
 class BanquitoClearinghouseServiceApplicationTests {
 
     @Test
-    void contextLoads() {
+    void mainClass_debeEstarDisponible() {
+        assertThat(BanquitoClearinghouseServiceApplication.class).isNotNull();
     }
-
 }

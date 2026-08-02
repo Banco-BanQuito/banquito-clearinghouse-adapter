@@ -36,6 +36,16 @@ public class OffUsPayment {
 
     private LocalDateTime createdAt;
 
+    private String externalBankCode;
+
+    private String externalReference;
+
+    private String externalStatus;
+
+    private String externalMessage;
+
+    private LocalDateTime routedAt;
+
     public String getId() {
         return id;
     }
@@ -130,5 +140,45 @@ public class OffUsPayment {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getExternalBankCode() {
+        return externalBankCode;
+    }
+
+    public void setExternalBankCode(String externalBankCode) {
+        this.externalBankCode = externalBankCode;
+    }
+
+    public String getExternalReference() {
+        return externalReference;
+    }
+
+    public void setExternalReference(String externalReference) {
+        this.externalReference = externalReference;
+    }
+
+    public String getExternalStatus() {
+        return externalStatus;
+    }
+
+    public void setExternalStatus(String externalStatus) {
+        this.externalStatus = externalStatus;
+    }
+
+    public String getExternalMessage() {
+        return externalMessage;
+    }
+
+    public void setExternalMessage(String externalMessage) {
+        this.externalMessage = externalMessage;
+    }
+
+    public LocalDateTime getRoutedAt() {
+        return routedAt;
+    }
+
+    public void setRoutedAt(LocalDateTime routedAt) {
+        this.routedAt = routedAt;
     }
 }
