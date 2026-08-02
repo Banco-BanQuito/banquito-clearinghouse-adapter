@@ -1,5 +1,6 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice;
 
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.OffUsSettlementRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.OffUsSettlementResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.PaymentStatus;
@@ -11,6 +12,7 @@ import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.Of
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.CoreSettlementProvider;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.OffUsPaymentRepository;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.CoreSettlementService;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.ExternalBankRoutingService;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InboundPaymentService;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.OffUsConsumerService;
 import io.grpc.stub.StreamObserver;
@@ -61,13 +63,17 @@ class EndToEndExternalTransferNostroSettlementTest {
     @Mock
     private CoreSettlementProvider coreSettlementProvider;
 
+    @Mock
+    private ExternalBankRoutingService externalBankRoutingService;
+
     @Test
     void clientExternalTransferNotifiedViaGrpc_triggersRealOffUsProcessingAndNostroSettlement() {
         // Arrange: cablea las clases REALES de clearinghouse-service (no mocks intermedios),
-        // solo mockeando los dos bordes de I/O (Mongo y el WebClient hacia account-core-service).
+        // solo mockeando los bordes de I/O (Mongo, WebClient hacia account-core-service y el
+        // enrutamiento al banco externo).
         CoreSettlementService coreSettlementService = new CoreSettlementService(coreSettlementProvider);
         OffUsConsumerService offUsConsumerService =
-                new OffUsConsumerService(offUsPaymentRepository, coreSettlementService);
+                new OffUsConsumerService(offUsPaymentRepository, coreSettlementService, externalBankRoutingService);
         InboundPaymentService inboundPaymentService = org.mockito.Mockito.mock(InboundPaymentService.class);
         ClearingGrpcService clearingGrpcService = new ClearingGrpcService(offUsConsumerService, inboundPaymentService);
 
@@ -76,6 +82,9 @@ class EndToEndExternalTransferNostroSettlementTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(coreSettlementProvider.registerSettlement(any(OffUsSettlementRequest.class)))
                 .thenReturn(new OffUsSettlementResponse());
+        when(externalBankRoutingService.route(any()))
+                .thenReturn(new ExternalBankPaymentResponse(
+                        "0010", "ACCEPTED", "BANQUIL-REF", "Pago recibido por BanQuil"));
 
         String transactionId = UUID.randomUUID().toString();
         String batchId = UUID.randomUUID().toString();

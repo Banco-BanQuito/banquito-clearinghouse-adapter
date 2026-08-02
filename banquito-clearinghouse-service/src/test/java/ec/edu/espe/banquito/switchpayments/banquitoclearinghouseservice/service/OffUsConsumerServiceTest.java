@@ -1,9 +1,11 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service;
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.OffUsPaymentMessage;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.ExternalBankPaymentResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.PaymentStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.SettlementStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.AccountingIntegrationException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.ExternalBankRoutingException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.OffUsPayment;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.OffUsPaymentRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +40,9 @@ class OffUsConsumerServiceTest {
     @Mock
     private CoreSettlementService coreSettlementService;
 
+    @Mock
+    private ExternalBankRoutingService externalBankRoutingService;
+
     @InjectMocks
     private OffUsConsumerService offUsConsumerService;
 
@@ -47,10 +52,14 @@ class OffUsConsumerServiceTest {
         org.mockito.Mockito.lenient()
                 .when(offUsPaymentRepository.save(any(OffUsPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.lenient()
+                .when(externalBankRoutingService.route(any()))
+                .thenReturn(new ExternalBankPaymentResponse(
+                        "BANQUIL", "ACCEPTED", "BANQUIL-REF", "Pago recibido por BanQuil"));
     }
 
     @Test
-    void process_debeSalvarPago_conEstadoRECEIVED_yLiquidarloIndividualmente() {
+    void process_debeEnviarABancoExternoYLiquidarloIndividualmente() {
         UUID batchId = UUID.randomUUID();
         UUID transactionId = UUID.randomUUID();
         when(offUsPaymentRepository.findFirstByTransactionId(transactionId)).thenReturn(Optional.empty());
@@ -64,6 +73,13 @@ class OffUsConsumerServiceTest {
         message.setAmount(new BigDecimal("100.00"));
         message.setCurrency("USD");
         message.setValueDate(LocalDate.of(2026, Month.JUNE, 12));
+        when(externalBankRoutingService.route(any()))
+                .thenReturn(new ExternalBankPaymentResponse(
+                        "BANQUIL",
+                        "ACCEPTED",
+                        "BANQUIL-" + transactionId,
+                        "Pago recibido por BanQuil"
+                ));
 
         offUsConsumerService.process(message);
 
@@ -80,11 +96,48 @@ class OffUsConsumerServiceTest {
         assertThat(persisted.getAmount()).isEqualByComparingTo(new BigDecimal("100.00"));
         assertThat(persisted.getCurrency()).isEqualTo("USD");
         assertThat(persisted.getStatus()).isEqualTo(PaymentStatus.RECEIVED);
+        assertThat(persisted.getExternalBankCode()).isEqualTo("BANQUIL");
+        assertThat(persisted.getExternalReference()).isEqualTo("BANQUIL-" + transactionId);
+        assertThat(persisted.getExternalStatus()).isEqualTo("ACCEPTED");
         assertThat(persisted.getCreatedAt()).isNotNull();
+        assertThat(persisted.getRoutedAt()).isNotNull();
 
         verify(coreSettlementService).registerOffUsSettlement(
                 batchId, transactionId, "001", new BigDecimal("100.00"));
         assertThat(settled.getSettlementStatus()).isEqualTo(SettlementStatus.SETTLED);
+    }
+
+    @Test
+    void process_debeSalvarPagoConError_cuandoNoExisteBancoExterno() {
+        UUID batchId = UUID.randomUUID();
+        UUID transactionId = UUID.randomUUID();
+        when(offUsPaymentRepository.findFirstByTransactionId(transactionId)).thenReturn(Optional.empty());
+
+        OffUsPaymentMessage message = new OffUsPaymentMessage();
+        message.setBatchId(batchId);
+        message.setTransactionId(transactionId);
+        message.setRoutingCode("999");
+        message.setOriginAccount("0001234567");
+        message.setDestinationAccount("0009876543");
+        message.setAmount(new BigDecimal("50.00"));
+        message.setCurrency("USD");
+        message.setValueDate(LocalDate.of(2026, Month.JUNE, 12));
+        when(externalBankRoutingService.route(any()))
+                .thenThrow(new ExternalBankRoutingException("No existe banco externo configurado"));
+
+        offUsConsumerService.process(message);
+
+        ArgumentCaptor<OffUsPayment> captor = ArgumentCaptor.forClass(OffUsPayment.class);
+        verify(offUsPaymentRepository, times(2)).save(captor.capture());
+        OffUsPayment persisted = captor.getAllValues().get(0);
+
+        assertThat(persisted.getCreatedAt()).isNotNull();
+        assertThat(persisted.getStatus()).isEqualTo(PaymentStatus.ERROR);
+        assertThat(persisted.getExternalStatus()).isEqualTo("REJECTED");
+        assertThat(persisted.getExternalMessage()).isEqualTo("No existe banco externo configurado");
+
+        verify(coreSettlementService).registerOffUsSettlement(
+                batchId, transactionId, "999", new BigDecimal("50.00"));
     }
 
     @Test
