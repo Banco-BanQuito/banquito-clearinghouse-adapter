@@ -61,6 +61,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: >
           mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
-          -Dsonar.projectKey=Banco-BanQuito_banquito-clearinghouse-service
+          -Dsonar.projectKey=Banco-BanQuito_banquito-clearinghouse-adapter
           -Dsonar.organization=banco-banquito
           -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.coverage.exclusions=**/config/**,**/dto/**,**/enums/**,**/exception/**,**/grpc/**,**/listener/**,**/mapper/**,**/model/**,**/provider/**,**/repository/**,**/*Application.java
