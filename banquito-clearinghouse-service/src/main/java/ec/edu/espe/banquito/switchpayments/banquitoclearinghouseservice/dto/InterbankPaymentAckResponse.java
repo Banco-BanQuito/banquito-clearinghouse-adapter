@@ -5,10 +5,14 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * Espejo de InterbankTransferResponse (BanQuito_API_Interbancaria_R9K_BanQuill_v1.yaml),
- * lado BanQuito como receptor. Se reutiliza para los tres casos de respuesta: liquidacion
- * exitosa (200), reenvio idempotente (200, idempotencyReplayed=true) y rechazo financiero
- * definitivo (422, ver InterbankPaymentController).
+ * Espejo de InterbankPaymentResponse (BanQuito_API_Interbancaria_v1.yaml), lado BanQuito
+ * como receptor. Se usa en los dos casos de respuesta del POST: admision exitosa
+ * (200, status=PREPARED) y reenvio idempotente (200, idempotencyReplayed=true), ademas
+ * del GET de consulta de estado.
+ *
+ * NO existe un 422 de rechazo financiero en el POST: el credito real es asincrono, asi
+ * que al momento de responder todavia no se sabe si la transferencia se acreditara. El
+ * estado final (SETTLED/REJECTED) solo es observable por el GET.
  */
 public record InterbankPaymentAckResponse(
         String interbankTransferUuid,

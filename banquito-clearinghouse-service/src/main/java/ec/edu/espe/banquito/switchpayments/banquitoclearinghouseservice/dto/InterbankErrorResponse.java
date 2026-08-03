@@ -4,10 +4,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Espejo de ErrorResponse (BanQuito_API_Interbancaria_R9K_BanQuill_v1.yaml). Usado en
- * 400/401/403/409/500 -- el 422 de rechazo financiero definitivo usa
- * InterbankPaymentAckResponse en su lugar (conserva la evidencia de la transferencia
- * rechazada).
+ * Espejo de ErrorResponse (BanQuito_API_Interbancaria_v1.yaml). Usado en 400/404/409/500.
+ * Los 401/403 declarados en el contrato los emite Apigee, no este servicio: la validacion
+ * del token OAuth2 ocurre en el gateway antes de llegar aqui.
  */
 public record InterbankErrorResponse(
         LocalDateTime timestamp,

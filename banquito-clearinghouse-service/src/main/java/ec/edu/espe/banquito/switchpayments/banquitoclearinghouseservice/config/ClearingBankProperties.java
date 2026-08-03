@@ -14,7 +14,7 @@ public class ClearingBankProperties {
 
     private Banquil banquil = new Banquil();
 
-    private Mateo mateo = new Mateo();
+    private Bank003 bank003 = new Bank003();
 
     public String getOwnRoutingCode() {
         return ownRoutingCode;
@@ -32,12 +32,12 @@ public class ClearingBankProperties {
         this.banquil = banquil;
     }
 
-    public Mateo getMateo() {
-        return mateo;
+    public Bank003 getBank003() {
+        return bank003;
     }
 
-    public void setMateo(Mateo mateo) {
-        this.mateo = mateo;
+    public void setBank003(Bank003 bank003) {
+        this.bank003 = bank003;
     }
 
     public static class Banquil {
@@ -106,10 +106,10 @@ public class ClearingBankProperties {
         }
     }
 
-    public static class Mateo {
-        private String bankCode = "MATEO";
+    public static class Bank003 {
+        private String bankCode = "BANK003";
         private List<String> routingCodes = new ArrayList<>(List.of("003"));
-        private String endpointUrl = "http://localhost:8090/api/v1/switch-core/payment-reservations/consume";
+        private String endpointUrl = "http://localhost:8090/api/v2/interbank/payments";
         private String bearerToken = "";
         private int timeoutSeconds = 10;
 
