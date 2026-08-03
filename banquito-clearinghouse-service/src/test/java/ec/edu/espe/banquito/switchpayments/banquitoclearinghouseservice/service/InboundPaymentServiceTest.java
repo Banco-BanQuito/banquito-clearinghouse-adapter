@@ -3,10 +3,11 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundPaymentMessage;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentAckResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.InboundPaymentStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundCompensatedException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentPayloadConflictException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.InboundPayment;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.InboundCreditProvider;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.InboundPaymentRepository;
@@ -48,14 +49,15 @@ class InboundPaymentServiceTest {
     @Test
     void process_debeAcreditarYQuedarCREDITED_cuandoAccountCoreServiceAcepta() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-1"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-1", "2200000005", "300.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "11111111-1111-4111-8111-111111111111", "2200000005", "300.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getBanquitoTransactionId()).isNotBlank();
@@ -68,14 +70,15 @@ class InboundPaymentServiceTest {
         ArgumentCaptor<InboundPayment> captor = ArgumentCaptor.forClass(InboundPayment.class);
         verify(inboundPaymentRepository, times(2)).save(captor.capture());
         InboundPayment persisted = captor.getAllValues().get(0);
-        assertThat(persisted.getOriginBankCode()).isEqualTo("003");
-        assertThat(persisted.getOriginTransactionId()).isEqualTo("ext-1");
+        assertThat(persisted.getSourceRoutingCode()).isEqualTo("003");
+        assertThat(persisted.getPaymentLineUuid()).isEqualTo("11111111-1111-4111-8111-111111111111");
         assertThat(persisted.getDestinationAccountNumber()).isEqualTo("2200000005");
         assertThat(persisted.getAmount()).isEqualByComparingTo(new BigDecimal("300.00"));
 
         ArgumentCaptor<InboundCreditRequest> creditCaptor = ArgumentCaptor.forClass(InboundCreditRequest.class);
         verify(inboundCreditProvider).registerInboundCredit(creditCaptor.capture());
         assertThat(creditCaptor.getValue().getOriginBankCode()).isEqualTo("003");
+        assertThat(creditCaptor.getValue().getOriginTransactionId()).isEqualTo("11111111-1111-4111-8111-111111111111");
         assertThat(creditCaptor.getValue().getDestinationAccountNumber()).isEqualTo("2200000005");
         assertThat(creditCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("300.00"));
     }
@@ -83,32 +86,34 @@ class InboundPaymentServiceTest {
     @Test
     void process_debeQuedarFAILED_yNoPropagarLaExcepcion_cuandoAccountCoreServiceRechazaElBanco() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("999", "ext-2"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("22222222-2222-4222-8222-222222222222"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenThrow(new RuntimeException("El banco corresponsal 999 no existe en el catálogo."));
 
-        InboundPayment result = inboundPaymentService.process(message("999", "ext-2", "2200000007", "40.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("999", "22222222-2222-4222-8222-222222222222", "2200000007", "40.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.FAILED);
         assertThat(result.getFailureMessage()).contains("999");
     }
 
     @Test
-    void process_noDebeReprocesar_cuandoYaExisteElMismoOriginBankCodeYOriginTransactionId() {
+    void process_noDebeReprocesar_cuandoYaExisteElMismoPaymentLineUuid() {
         inboundPaymentService = service();
         InboundPayment existing = new InboundPayment();
         existing.setId("mongo-id");
-        existing.setOriginBankCode("003");
-        existing.setOriginTransactionId("ext-1");
+        existing.setSourceRoutingCode("003");
+        existing.setPaymentLineUuid("11111111-1111-4111-8111-111111111111");
         existing.setBanquitoTransactionId("existing-tx-id");
         existing.setStatus(InboundPaymentStatus.CREDITED);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-1"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.of(existing));
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-1", "2200000005", "300.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "11111111-1111-4111-8111-111111111111", "2200000005", "300.00"));
 
         assertThat(result.getBanquitoTransactionId()).isEqualTo("existing-tx-id");
         verify(inboundPaymentRepository, never()).save(any());
@@ -118,14 +123,15 @@ class InboundPaymentServiceTest {
     @Test
     void process_debeQuedarCOMPENSATED_cuandoAccountCoreServiceCompensaTrasFalloParcial() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-3"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("33333333-3333-4333-8333-333333333333"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenThrow(new InboundCompensatedException("Delivery rechazado, asiento INBOUND revertido", null));
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-3", "2200000010", "150.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "33333333-3333-4333-8333-333333333333", "2200000010", "150.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.COMPENSATED);
         assertThat(result.getAttemptCount()).isEqualTo(1);
@@ -140,22 +146,23 @@ class InboundPaymentServiceTest {
         inboundPaymentService = service();
         InboundPayment existing = new InboundPayment();
         existing.setId("mongo-id-failed");
-        existing.setOriginBankCode("999");
-        existing.setOriginTransactionId("ext-4");
+        existing.setSourceRoutingCode("999");
+        existing.setPaymentLineUuid("44444444-4444-4444-8444-444444444444");
         existing.setDestinationAccountNumber("2200000011");
         existing.setAmount(new BigDecimal("40.00"));
         existing.setBeneficiaryName("Ana Torres");
         existing.setBanquitoTransactionId("tx-failed");
         existing.setStatus(InboundPaymentStatus.FAILED);
         existing.setAttemptCount(1);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("999", "ext-4"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("44444444-4444-4444-8444-444444444444"))
                 .thenReturn(Optional.of(existing));
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
 
-        InboundPayment result = inboundPaymentService.process(message("999", "ext-4", "2200000011", "40.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("999", "44444444-4444-4444-8444-444444444444", "2200000011", "40.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getAttemptCount()).isEqualTo(1);
@@ -170,22 +177,23 @@ class InboundPaymentServiceTest {
         inboundPaymentService = service();
         InboundPayment compensated = new InboundPayment();
         compensated.setId("mongo-id-compensated");
-        compensated.setOriginBankCode("003");
-        compensated.setOriginTransactionId("ext-5");
+        compensated.setSourceRoutingCode("003");
+        compensated.setPaymentLineUuid("55555555-5555-4555-8555-555555555555");
         compensated.setDestinationAccountNumber("2200000012");
         compensated.setAmount(new BigDecimal("250.00"));
         compensated.setBeneficiaryName("Carlos Mora");
         compensated.setBanquitoTransactionId("tx-compensated");
         compensated.setStatus(InboundPaymentStatus.COMPENSATED);
         compensated.setAttemptCount(1);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-5"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("55555555-5555-4555-8555-555555555555"))
                 .thenReturn(Optional.of(compensated));
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-5", "2200000012", "250.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "55555555-5555-4555-8555-555555555555", "2200000012", "250.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getAttemptCount()).isEqualTo(2);
@@ -209,15 +217,15 @@ class InboundPaymentServiceTest {
         inboundPaymentService = service();
         InboundPayment compensated = new InboundPayment();
         compensated.setId("mongo-id-compensated-2");
-        compensated.setOriginBankCode("003");
-        compensated.setOriginTransactionId("ext-6");
+        compensated.setSourceRoutingCode("003");
+        compensated.setPaymentLineUuid("66666666-6666-4666-8666-666666666666");
         compensated.setDestinationAccountNumber("2200000013");
         compensated.setAmount(new BigDecimal("80.00"));
         compensated.setBeneficiaryName("Elena Vaca");
         compensated.setBanquitoTransactionId("tx-compensated-2");
         compensated.setStatus(InboundPaymentStatus.COMPENSATED);
         compensated.setAttemptCount(1);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-6"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("66666666-6666-4666-8666-666666666666"))
                 .thenReturn(Optional.of(compensated));
         // InboundPayment es el MISMO objeto mutable en todas las invocaciones de save(); un
         // ArgumentCaptor leido despues de que el metodo termina veria siempre el estado final
@@ -236,7 +244,8 @@ class InboundPaymentServiceTest {
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-6", "2200000013", "80.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "66666666-6666-4666-8666-666666666666", "2200000013", "80.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getAttemptCount()).isEqualTo(2);
@@ -268,8 +277,8 @@ class InboundPaymentServiceTest {
         inboundPaymentService = service();
         InboundPayment inFlight = new InboundPayment();
         inFlight.setId("mongo-id-inflight");
-        inFlight.setOriginBankCode("003");
-        inFlight.setOriginTransactionId("ext-7");
+        inFlight.setSourceRoutingCode("003");
+        inFlight.setPaymentLineUuid("77777777-7777-4777-8777-777777777777");
         inFlight.setDestinationAccountNumber("2200000014");
         inFlight.setAmount(new BigDecimal("120.00"));
         inFlight.setBeneficiaryName("Diego Salazar");
@@ -278,14 +287,15 @@ class InboundPaymentServiceTest {
         // incrementado a 2 (persistido antes de la llamada que nunca confirmo resultado).
         inFlight.setStatus(InboundPaymentStatus.RECEIVED);
         inFlight.setAttemptCount(2);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-7"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("77777777-7777-4777-8777-777777777777"))
                 .thenReturn(Optional.of(inFlight));
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
 
-        InboundPayment result = inboundPaymentService.process(message("003", "ext-7", "2200000014", "120.00"));
+        InboundPayment result = inboundPaymentService.process(
+                message("003", "77777777-7777-4777-8777-777777777777", "2200000014", "120.00"));
 
         assertThat(result.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
         assertThat(result.getAttemptCount())
@@ -300,19 +310,18 @@ class InboundPaymentServiceTest {
     }
 
     @Test
-    void admit_debePersistirRECEIVED_conUetr_yNoLlamarAAccountCoreService_cuandoEsNuevo() {
+    void admit_debePersistirRECEIVED_conPaymentLineUuid_yNoLlamarAAccountCoreService_cuandoEsNuevo() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-1"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        InboundPaymentMessage message = message("002", "PICHINCHA-TX-1", "2200000001", "150.00");
-        message.setUetr("11111111-1111-4111-8111-111111111111");
+        InboundPaymentMessage message = message("002", "11111111-1111-4111-8111-111111111111", "2200000001", "150.00");
 
         InboundPaymentService.AdmissionResult result = inboundPaymentService.admit(message);
 
         assertThat(result.isNew()).isTrue();
-        assertThat(result.payment().getUetr()).isEqualTo("11111111-1111-4111-8111-111111111111");
+        assertThat(result.payment().getPaymentLineUuid()).isEqualTo("11111111-1111-4111-8111-111111111111");
         assertThat(result.payment().getStatus()).isEqualTo(InboundPaymentStatus.RECEIVED);
         assertThat(result.payment().getBanquitoTransactionId()).isNotBlank();
         verify(inboundPaymentRepository, times(1)).save(any(InboundPayment.class));
@@ -320,18 +329,19 @@ class InboundPaymentServiceTest {
     }
 
     @Test
-    void admit_debeRetornarElExistente_sinPersistirNiLlamarAAccountCoreService_cuandoYaExiste() {
+    void admit_debeRetornarElExistente_sinPersistirNiLlamarAAccountCoreService_cuandoPayloadIdentico() {
         inboundPaymentService = service();
+        InboundPaymentMessage message = message("002", "11111111-1111-4111-8111-111111111111", "2200000001", "150.00");
         InboundPayment existing = new InboundPayment();
-        existing.setOriginBankCode("002");
-        existing.setOriginTransactionId("PICHINCHA-TX-1");
+        existing.setSourceRoutingCode("002");
+        existing.setPaymentLineUuid("11111111-1111-4111-8111-111111111111");
         existing.setBanquitoTransactionId("tx-ya-existente");
         existing.setStatus(InboundPaymentStatus.CREDITED);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-1"))
+        existing.setPayloadHash(InboundPaymentService.hashPayload(message));
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.of(existing));
 
-        InboundPaymentService.AdmissionResult result = inboundPaymentService.admit(
-                message("002", "PICHINCHA-TX-1", "2200000001", "150.00"));
+        InboundPaymentService.AdmissionResult result = inboundPaymentService.admit(message);
 
         assertThat(result.isNew()).isFalse();
         assertThat(result.payment().getBanquitoTransactionId()).isEqualTo("tx-ya-existente");
@@ -340,20 +350,42 @@ class InboundPaymentServiceTest {
     }
 
     @Test
+    void admit_debeLanzarConflicto_cuandoMismoPaymentLineUuidTienePayloadDistinto() {
+        inboundPaymentService = service();
+        InboundPaymentMessage original = message("002", "11111111-1111-4111-8111-111111111111", "2200000001", "150.00");
+        InboundPayment existing = new InboundPayment();
+        existing.setSourceRoutingCode("002");
+        existing.setPaymentLineUuid("11111111-1111-4111-8111-111111111111");
+        existing.setBanquitoTransactionId("tx-ya-existente");
+        existing.setStatus(InboundPaymentStatus.CREDITED);
+        existing.setPayloadHash(InboundPaymentService.hashPayload(original));
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
+                .thenReturn(Optional.of(existing));
+
+        // mismo paymentLineUuid, monto distinto -> payload distinto
+        InboundPaymentMessage retriedWithDifferentPayload =
+                message("002", "11111111-1111-4111-8111-111111111111", "2200000001", "999.00");
+
+        assertThatThrownBy(() -> inboundPaymentService.admit(retriedWithDifferentPayload))
+                .isInstanceOf(InboundPaymentPayloadConflictException.class);
+        verify(inboundPaymentRepository, never()).save(any());
+    }
+
+    @Test
     void admitLuegoProcess_debeCompletarElCredito_reusandoElMismoRegistroRECEIVED() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-2"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("22222222-2222-4222-8222-222222222222"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        InboundPaymentMessage message = message("002", "PICHINCHA-TX-2", "2200000002", "200.00");
+        InboundPaymentMessage message = message("002", "22222222-2222-4222-8222-222222222222", "2200000002", "200.00");
 
         InboundPaymentService.AdmissionResult admission = inboundPaymentService.admit(message);
         assertThat(admission.isNew()).isTrue();
         assertThat(admission.payment().getStatus()).isEqualTo(InboundPaymentStatus.RECEIVED);
 
         // simula que process() ahora encuentra el registro RECEIVED recien persistido
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-2"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("22222222-2222-4222-8222-222222222222"))
                 .thenReturn(Optional.of(admission.payment()));
         when(inboundCreditProvider.registerInboundCredit(any(InboundCreditRequest.class)))
                 .thenReturn(new InboundCreditResponse());
@@ -365,128 +397,106 @@ class InboundPaymentServiceTest {
     }
 
     @Test
-    void getStatusByUetr_debeMapearACSC_cuandoPagoEstaCREDITED() {
+    void getStatusByPaymentLineUuid_debeMapearSETTLED_cuandoPagoEstaCREDITED() {
         inboundPaymentService = service();
         InboundPayment payment = new InboundPayment();
-        payment.setUetr("11111111-1111-4111-8111-111111111111");
-        payment.setOriginBankCode("002");
-        payment.setOriginTransactionId("PICHINCHA-TX-1");
-        payment.setBanquitoTransactionId("tx-123");
+        payment.setPaymentLineUuid("11111111-1111-4111-8111-111111111111");
+        payment.setSourceRoutingCode("002");
+        payment.setBanquitoTransactionId("99999999-9999-4999-8999-999999999999");
         payment.setStatus(InboundPaymentStatus.CREDITED);
         payment.setUpdatedAt(LocalDateTime.of(2026, 8, 2, 10, 0));
-        when(inboundPaymentRepository.findFirstByUetr("11111111-1111-4111-8111-111111111111"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.of(payment));
 
-        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("11111111-1111-4111-8111-111111111111");
+        InterbankPaymentAckResponse response =
+                inboundPaymentService.getStatusByPaymentLineUuid("11111111-1111-4111-8111-111111111111");
 
-        assertThat(response.status()).isEqualTo("ACSC");
-        assertThat(response.banquitoTransactionId()).isEqualTo("tx-123");
-        assertThat(response.failureMessage()).isNull();
-        assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 2, 10, 0));
+        assertThat(response.status()).isEqualTo("SETTLED");
+        assertThat(response.interbankTransferUuid()).isEqualTo("99999999-9999-4999-8999-999999999999");
+        assertThat(response.message()).isNull();
+        assertThat(response.processedAt()).isEqualTo(LocalDateTime.of(2026, 8, 2, 10, 0));
     }
 
     @Test
-    void getStatusByUetr_debeMapearPDNG_cuandoPagoEstaRECEIVED() {
+    void getStatusByPaymentLineUuid_debeMapearPREPARED_cuandoPagoEstaRECEIVED() {
         inboundPaymentService = service();
         InboundPayment payment = new InboundPayment();
-        payment.setUetr("22222222-2222-4222-8222-222222222222");
+        payment.setPaymentLineUuid("22222222-2222-4222-8222-222222222222");
         payment.setStatus(InboundPaymentStatus.RECEIVED);
-        when(inboundPaymentRepository.findFirstByUetr("22222222-2222-4222-8222-222222222222"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("22222222-2222-4222-8222-222222222222"))
                 .thenReturn(Optional.of(payment));
 
-        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("22222222-2222-4222-8222-222222222222");
+        InterbankPaymentAckResponse response =
+                inboundPaymentService.getStatusByPaymentLineUuid("22222222-2222-4222-8222-222222222222");
 
-        assertThat(response.status()).isEqualTo("PDNG");
-        assertThat(response.failureMessage()).isNull();
+        assertThat(response.status()).isEqualTo("PREPARED");
+        assertThat(response.message()).isNull();
     }
 
     @Test
-    void getStatusByUetr_debeMapearRJCT_yMensajeReintentable_cuandoPagoEstaFAILED() {
+    void getStatusByPaymentLineUuid_debeMapearREJECTED_yMensajeReintentable_cuandoPagoEstaFAILED() {
         inboundPaymentService = service();
         InboundPayment payment = new InboundPayment();
-        payment.setUetr("33333333-3333-4333-8333-333333333333");
+        payment.setPaymentLineUuid("33333333-3333-4333-8333-333333333333");
         payment.setStatus(InboundPaymentStatus.FAILED);
         payment.setFailureMessage("El banco corresponsal 999 no existe en el catálogo.");
-        when(inboundPaymentRepository.findFirstByUetr("33333333-3333-4333-8333-333333333333"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("33333333-3333-4333-8333-333333333333"))
                 .thenReturn(Optional.of(payment));
 
-        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("33333333-3333-4333-8333-333333333333");
+        InterbankPaymentAckResponse response =
+                inboundPaymentService.getStatusByPaymentLineUuid("33333333-3333-4333-8333-333333333333");
 
-        assertThat(response.status()).isEqualTo("RJCT");
+        assertThat(response.status()).isEqualTo("REJECTED");
         // el mensaje interno crudo (con detalle del banco corresponsal) nunca debe exponerse
         // tal cual a un banco externo: solo un motivo generico que indica que es reintentable.
-        assertThat(response.failureMessage())
+        assertThat(response.message())
                 .doesNotContain("999")
                 .contains("reintentarse");
     }
 
     @Test
-    void getStatusByUetr_debeMapearRJCT_yMensajeReintentable_cuandoPagoEstaCOMPENSATED() {
+    void getStatusByPaymentLineUuid_debeMapearREJECTED_yMensajeReintentable_cuandoPagoEstaCOMPENSATED() {
         inboundPaymentService = service();
         InboundPayment payment = new InboundPayment();
-        payment.setUetr("44444444-4444-4444-8444-444444444444");
+        payment.setPaymentLineUuid("44444444-4444-4444-8444-444444444444");
         payment.setStatus(InboundPaymentStatus.COMPENSATED);
         payment.setFailureMessage("Delivery rechazado, asiento INBOUND revertido");
-        when(inboundPaymentRepository.findFirstByUetr("44444444-4444-4444-8444-444444444444"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("44444444-4444-4444-8444-444444444444"))
                 .thenReturn(Optional.of(payment));
 
-        InterbankPaymentStatusResponse response = inboundPaymentService.getStatusByUetr("44444444-4444-4444-8444-444444444444");
+        InterbankPaymentAckResponse response =
+                inboundPaymentService.getStatusByPaymentLineUuid("44444444-4444-4444-8444-444444444444");
 
-        assertThat(response.status()).isEqualTo("RJCT");
-        assertThat(response.failureMessage())
+        assertThat(response.status()).isEqualTo("REJECTED");
+        assertThat(response.message())
                 .doesNotContain("Delivery rechazado")
                 .contains("reintentarse");
     }
 
     @Test
-    void getStatusByUetr_debeLanzarNotFound_cuandoUetrNoExiste() {
+    void getStatusByPaymentLineUuid_debeLanzarNotFound_cuandoPaymentLineUuidNoExiste() {
         inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByUetr("no-existe")).thenReturn(Optional.empty());
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("no-existe")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> inboundPaymentService.getStatusByUetr("no-existe"))
+        assertThatThrownBy(() -> inboundPaymentService.getStatusByPaymentLineUuid("no-existe"))
                 .isInstanceOf(InboundPaymentNotFoundException.class);
     }
 
-    @Test
-    void getStatusByOriginTransaction_debeRetornarStatus_cuandoExiste() {
-        inboundPaymentService = service();
-        InboundPayment payment = new InboundPayment();
-        payment.setOriginBankCode("002");
-        payment.setOriginTransactionId("PICHINCHA-TX-1");
-        payment.setBanquitoTransactionId("tx-123");
-        payment.setStatus(InboundPaymentStatus.CREDITED);
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-1"))
-                .thenReturn(Optional.of(payment));
-
-        InterbankPaymentStatusResponse response =
-                inboundPaymentService.getStatusByOriginTransaction("002", "PICHINCHA-TX-1");
-
-        assertThat(response.originBankCode()).isEqualTo("002");
-        assertThat(response.originTransactionId()).isEqualTo("PICHINCHA-TX-1");
-        assertThat(response.status()).isEqualTo("ACSC");
-    }
-
-    @Test
-    void getStatusByOriginTransaction_debeLanzarNotFound_cuandoNoExiste() {
-        inboundPaymentService = service();
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("999", "no-existe"))
-                .thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> inboundPaymentService.getStatusByOriginTransaction("999", "no-existe"))
-                .isInstanceOf(InboundPaymentNotFoundException.class);
-    }
-
-    private InboundPaymentMessage message(String originBankCode, String originTransactionId,
+    private InboundPaymentMessage message(String sourceRoutingCode, String paymentLineUuid,
                                           String destinationAccountNumber, String amount) {
         InboundPaymentMessage message = new InboundPaymentMessage();
-        message.setOriginBankCode(originBankCode);
-        message.setOriginTransactionId(originTransactionId);
+        message.setSourceTransferUuid(paymentLineUuid);
+        message.setPaymentLineUuid(paymentLineUuid);
+        message.setSourceRoutingCode(sourceRoutingCode);
+        message.setDestinationRoutingCode("BQTO001");
         message.setDestinationAccountNumber(destinationAccountNumber);
+        message.setBeneficiaryIdentification("0102030405");
         message.setAmount(new BigDecimal(amount));
         message.setCurrency("USD");
         message.setConcept("Transferencia interbancaria");
         message.setBeneficiaryName("Maria Sanchez");
-        message.setValueDate(LocalDate.of(2026, Month.AUGUST, 2));
+        message.setAccountingDate(LocalDate.of(2026, Month.AUGUST, 2));
+        message.setCorrelationId(paymentLineUuid);
         return message;
     }
 }

@@ -62,7 +62,7 @@ class EndToEndInboundPaymentTest {
         InboundPaymentService inboundPaymentService = new InboundPaymentService(inboundPaymentRepository, inboundCreditProvider);
         ClearingGrpcService clearingGrpcService = new ClearingGrpcService(offUsConsumerService, inboundPaymentService);
 
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-tx-1"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("ext-tx-1"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -94,7 +94,7 @@ class EndToEndInboundPaymentTest {
         verify(inboundPaymentRepository, times(2)).save(savedCaptor.capture());
         InboundPayment finalState = savedCaptor.getAllValues().get(1);
         assertThat(finalState.getStatus()).isEqualTo(InboundPaymentStatus.CREDITED);
-        assertThat(finalState.getOriginBankCode()).isEqualTo("003");
+        assertThat(finalState.getSourceRoutingCode()).isEqualTo("003");
         assertThat(finalState.getDestinationAccountNumber()).isEqualTo("2200000005");
         assertThat(finalState.getAmount()).isEqualByComparingTo(new BigDecimal("300.00"));
 
@@ -109,7 +109,7 @@ class EndToEndInboundPaymentTest {
         InboundPaymentService inboundPaymentService = new InboundPaymentService(inboundPaymentRepository, inboundCreditProvider);
         ClearingGrpcService clearingGrpcService = new ClearingGrpcService(offUsConsumerService, inboundPaymentService);
 
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("999", "ext-tx-2"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("ext-tx-2"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -164,7 +164,7 @@ class EndToEndInboundPaymentTest {
         // Simula el repositorio Mongo real: la primera llamada no encuentra nada y persiste;
         // a partir de ahi, cualquier busqueda por la misma clave debe encontrar lo persistido.
         java.util.concurrent.atomic.AtomicReference<InboundPayment> stored = new java.util.concurrent.atomic.AtomicReference<>();
-        when(sharedRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-tx-dup"))
+        when(sharedRepository.findFirstByPaymentLineUuid("ext-tx-dup"))
                 .thenAnswer(invocation -> Optional.ofNullable(stored.get()));
         when(sharedRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> {
@@ -224,7 +224,7 @@ class EndToEndInboundPaymentTest {
         ClearingGrpcService clearingGrpcService = new ClearingGrpcService(offUsConsumerService, inboundPaymentService);
 
         java.util.concurrent.atomic.AtomicReference<InboundPayment> stored = new java.util.concurrent.atomic.AtomicReference<>();
-        when(sharedRepository.findFirstByOriginBankCodeAndOriginTransactionId("003", "ext-tx-retry"))
+        when(sharedRepository.findFirstByPaymentLineUuid("ext-tx-retry"))
                 .thenAnswer(invocation -> Optional.ofNullable(stored.get()));
         when(sharedRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> {

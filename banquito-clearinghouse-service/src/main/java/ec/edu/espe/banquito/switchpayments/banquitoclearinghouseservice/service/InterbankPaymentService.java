@@ -9,12 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Parte 2 (interoperabilidad REST real): frontera entre el ack HTTP rapido (RCVD, ISO
- * 20022) y la orquestacion completa de InboundPaymentService (Fase 4). El desacople del
- * hilo de la respuesta HTTP se logra publicando a Pub/Sub (InterbankPaymentPublisher,
- * topico interbank-payments-received); InterbankPaymentQueueListener consume ese topico y
- * ejecuta process() de forma asincrona. No implementa el despacho saliente hacia otro
- * banco (Parte 3) ni las confirmaciones ACSC/RJCT (Parte 4).
+ * Frontera entre el ack HTTP rapido y la orquestacion completa de InboundPaymentService.
+ * El desacople del hilo de la respuesta HTTP se logra publicando a Pub/Sub
+ * (InterbankPaymentPublisher, topico interbank-payments-received); InterbankPaymentQueueListener
+ * consume ese topico y ejecuta process() de forma asincrona. No implementa el despacho
+ * saliente hacia otro banco ni las confirmaciones de estado hacia el banco origen mas alla
+ * del PREPARED/SETTLED/REJECTED sincronos.
  */
 @Service
 public class InterbankPaymentService {
@@ -31,9 +31,11 @@ public class InterbankPaymentService {
     }
 
     /**
-     * Sincrono y rapido: NO llama a account-core-service. Solo dedupea (por uetr primero
-     * -- es el identificador que el banco origen conoce y puede reintentar -- y por
-     * (originBankCode, originTransactionId) como respaldo) y persiste RECEIVED si es nuevo.
+     * Sincrono y rapido: NO llama a account-core-service. Solo dedupea por paymentLineUuid
+     * (la llave idempotente del contrato, igual al header Idempotency-Key) y persiste
+     * RECEIVED si es nuevo. Puede lanzar InboundPaymentPayloadConflictException (409) si el
+     * mismo paymentLineUuid ya fue admitido con un payload distinto (ver
+     * InboundPaymentService.admit()).
      */
     public InterbankPaymentAckResponse receive(InterbankPaymentRequest request) {
         InboundPaymentMessage message = toMessage(request);
@@ -41,28 +43,36 @@ public class InterbankPaymentService {
         InboundPayment payment = admission.payment();
 
         if (admission.isNew()) {
-            log.info("Pago interbancario admitido: uetr={}, originBankCode={}, originTransactionId={}, banquitoTransactionId={}",
-                    request.uetr(), request.originBankCode(), request.originTransactionId(), payment.getBanquitoTransactionId());
+            log.info("Pago interbancario admitido: paymentLineUuid={}, sourceRoutingCode={}, banquitoTransactionId={}",
+                    request.paymentLineUuid(), request.sourceRoutingCode(), payment.getBanquitoTransactionId());
             interbankPaymentPublisher.publish(message);
         } else {
-            log.info("Pago interbancario duplicado: uetr={}, originBankCode={}, originTransactionId={}, se re-responde banquitoTransactionId={} sin reprocesar",
-                    request.uetr(), request.originBankCode(), request.originTransactionId(), payment.getBanquitoTransactionId());
+            log.info("Pago interbancario duplicado (reenvio identico): paymentLineUuid={}, sourceRoutingCode={}, se re-responde banquitoTransactionId={} sin reprocesar",
+                    request.paymentLineUuid(), request.sourceRoutingCode(), payment.getBanquitoTransactionId());
         }
 
-        return new InterbankPaymentAckResponse(request.uetr(), "RCVD", payment.getBanquitoTransactionId());
+        return inboundPaymentService.toResponse(payment, !admission.isNew());
     }
 
     private InboundPaymentMessage toMessage(InterbankPaymentRequest request) {
         InboundPaymentMessage message = new InboundPaymentMessage();
-        message.setUetr(request.uetr());
-        message.setOriginBankCode(request.originBankCode());
-        message.setOriginTransactionId(request.originTransactionId());
+        message.setSourceTransferUuid(request.sourceTransferUuid());
+        message.setPaymentLineUuid(request.paymentLineUuid());
+        message.setBatchUuid(request.batchUuid());
+        message.setSourceRoutingCode(request.sourceRoutingCode());
+        message.setDestinationRoutingCode(request.destinationRoutingCode());
+        message.setSourceAccountNumber(request.sourceAccountNumber());
         message.setDestinationAccountNumber(request.destinationAccountNumber());
+        message.setOriginatorIdentification(request.originatorIdentification());
+        message.setOriginatorName(request.originatorName());
+        message.setBeneficiaryIdentification(request.beneficiaryIdentification());
+        message.setBeneficiaryName(request.beneficiaryName());
+        message.setBeneficiaryEmail(request.beneficiaryEmail());
+        message.setConcept(request.concept());
         message.setAmount(request.amount());
         message.setCurrency(request.currency());
-        message.setConcept(request.concept());
-        message.setBeneficiaryName(request.beneficiaryName());
-        message.setValueDate(request.valueDate());
+        message.setAccountingDate(request.accountingDate());
+        message.setCorrelationId(request.correlationId());
         return message;
     }
 }

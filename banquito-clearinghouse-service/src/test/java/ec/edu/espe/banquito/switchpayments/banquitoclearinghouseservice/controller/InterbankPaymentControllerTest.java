@@ -1,9 +1,10 @@
 package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.controller;
 
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankErrorResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentAckResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentRequest;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentPayloadConflictException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InboundPaymentService;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InterbankPaymentService;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,6 @@ import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,120 +35,156 @@ class InterbankPaymentControllerTest {
     private InterbankPaymentController interbankPaymentController;
 
     @Test
-    void receive_debeRetornar200ConAckRCVD_cuandoPayloadEsValido() {
+    void receive_debeRetornar200ConAckPreparado_cuandoPayloadEsValido() {
         InterbankPaymentRequest request = validRequest();
-        InterbankPaymentAckResponse expected = new InterbankPaymentAckResponse(request.uetr(), "RCVD", "tx-123");
+        InterbankPaymentAckResponse expected = ackResponse(request, "PREPARED", false);
         when(interbankPaymentService.receive(request)).thenReturn(expected);
 
-        ResponseEntity<InterbankPaymentAckResponse> response = interbankPaymentController.receive(request);
+        ResponseEntity<Object> response = interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().status()).isEqualTo("RCVD");
-        assertThat(response.getBody().banquitoTransactionId()).isEqualTo("tx-123");
+        assertThat(response.getHeaders().getFirst("Idempotency-Replayed")).isEqualTo("false");
+        assertThat(response.getBody()).isInstanceOf(InterbankPaymentAckResponse.class);
+        InterbankPaymentAckResponse body = (InterbankPaymentAckResponse) response.getBody();
+        assertThat(body.status()).isEqualTo("PREPARED");
+        assertThat(body.interbankTransferUuid()).isEqualTo("tx-123");
     }
 
     @Test
-    void receive_debeLanzarExcepcion_cuandoUetrEsNulo() {
-        InterbankPaymentRequest request = new InterbankPaymentRequest(
-                null, "002", "PICHINCHA-TX-1", "2200000001",
-                new BigDecimal("150.00"), "USD", "Pago", "Juan Perez", LocalDate.of(2026, 8, 1));
+    void receive_debeRetornar409_cuandoElServicioDetectaPayloadConflictivo() {
+        InterbankPaymentRequest request = validRequest();
+        when(interbankPaymentService.receive(request))
+                .thenThrow(new InboundPaymentPayloadConflictException(
+                        "El paymentLineUuid " + request.paymentLineUuid() + " ya fue admitido con un payload diferente"));
 
-        assertThatThrownBy(() -> interbankPaymentController.receive(request))
+        ResponseEntity<Object> response = interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody()).isInstanceOf(InterbankErrorResponse.class);
+        InterbankErrorResponse error = (InterbankErrorResponse) response.getBody();
+        assertThat(error.code()).isEqualTo("INTERBANK_IDEMPOTENCY_PAYLOAD_CONFLICT");
+    }
+
+    @Test
+    void receive_debeLanzarExcepcion_cuandoSourceTransferUuidEsNulo() {
+        InterbankPaymentRequest request = request(null, UUID.randomUUID().toString());
+
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void receive_debeLanzarExcepcion_cuandoUetrNoEsUuidValido() {
-        InterbankPaymentRequest request = new InterbankPaymentRequest(
-                "no-es-un-uuid", "002", "PICHINCHA-TX-1", "2200000001",
-                new BigDecimal("150.00"), "USD", "Pago", "Juan Perez", LocalDate.of(2026, 8, 1));
+    void receive_debeLanzarExcepcion_cuandoPaymentLineUuidNoEsUuidValido() {
+        InterbankPaymentRequest request = request(UUID.randomUUID().toString(), "no-es-un-uuid");
 
-        assertThatThrownBy(() -> interbankPaymentController.receive(request))
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                "no-es-un-uuid", request.correlationId(), request))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void receive_debeLanzarExcepcion_cuandoAmountEsCeroONegativo() {
+    void receive_debeLanzarExcepcion_cuandoAmountEsMenorAlMinimo() {
+        InterbankPaymentRequest base = validRequest();
         InterbankPaymentRequest request = new InterbankPaymentRequest(
-                UUID.randomUUID().toString(), "002", "PICHINCHA-TX-1", "2200000001",
-                BigDecimal.ZERO, "USD", "Pago", "Juan Perez", LocalDate.of(2026, 8, 1));
+                base.sourceTransferUuid(), base.paymentLineUuid(), base.batchUuid(),
+                base.sourceRoutingCode(), base.destinationRoutingCode(), base.sourceAccountNumber(),
+                base.destinationAccountNumber(), base.originatorIdentification(), base.originatorName(),
+                base.beneficiaryIdentification(), base.beneficiaryName(), base.beneficiaryEmail(),
+                base.concept(), BigDecimal.ZERO, base.currency(), base.accountingDate(), base.correlationId());
 
-        assertThatThrownBy(() -> interbankPaymentController.receive(request))
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void receive_debeLanzarExcepcion_cuandoFaltaCampoRequerido() {
+        InterbankPaymentRequest base = validRequest();
         InterbankPaymentRequest request = new InterbankPaymentRequest(
-                UUID.randomUUID().toString(), "002", "PICHINCHA-TX-1", null,
-                new BigDecimal("150.00"), "USD", "Pago", "Juan Perez", LocalDate.of(2026, 8, 1));
+                base.sourceTransferUuid(), base.paymentLineUuid(), base.batchUuid(),
+                base.sourceRoutingCode(), base.destinationRoutingCode(), base.sourceAccountNumber(),
+                null, base.originatorIdentification(), base.originatorName(),
+                base.beneficiaryIdentification(), base.beneficiaryName(), base.beneficiaryEmail(),
+                base.concept(), base.amount(), base.currency(), base.accountingDate(), base.correlationId());
 
-        assertThatThrownBy(() -> interbankPaymentController.receive(request))
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void receive_debeLanzarExcepcion_cuandoIdempotencyKeyNoCoincideConPaymentLineUuid() {
+        InterbankPaymentRequest request = validRequest();
+
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                UUID.randomUUID().toString(), request.correlationId(), request))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void receive_debeLanzarExcepcion_cuandoCorrelationIdHeaderNoCoincideConElCuerpo() {
+        InterbankPaymentRequest request = validRequest();
+
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                request.paymentLineUuid(), UUID.randomUUID().toString(), request))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void receive_noDebeLlamarAlServicio_cuandoValidacionFalla() {
-        InterbankPaymentRequest request = new InterbankPaymentRequest(
-                null, "002", "PICHINCHA-TX-1", "2200000001",
-                new BigDecimal("150.00"), "USD", "Pago", "Juan Perez", LocalDate.of(2026, 8, 1));
+        InterbankPaymentRequest request = request(null, UUID.randomUUID().toString());
 
-        assertThatThrownBy(() -> interbankPaymentController.receive(request))
+        assertThatThrownBy(() -> interbankPaymentController.receive(
+                request.paymentLineUuid(), request.correlationId(), request))
                 .isInstanceOf(IllegalArgumentException.class);
         org.mockito.Mockito.verifyNoInteractions(interbankPaymentService);
     }
 
     @Test
-    void statusByUetr_debeRetornar200ConElStatus_cuandoExiste() {
-        String uetr = UUID.randomUUID().toString();
-        InterbankPaymentStatusResponse expected = new InterbankPaymentStatusResponse(
-                uetr, "002", "PICHINCHA-TX-1", "ACSC", "tx-123", null,
-                LocalDateTime.of(2026, 8, 2, 10, 0));
-        when(inboundPaymentService.getStatusByUetr(uetr)).thenReturn(expected);
+    void status_debeRetornar200ConElStatus_cuandoExiste() {
+        String paymentLineUuid = UUID.randomUUID().toString();
+        InterbankPaymentAckResponse expected = ackResponse(request(paymentLineUuid, paymentLineUuid), "SETTLED", false);
+        when(inboundPaymentService.getStatusByPaymentLineUuid(paymentLineUuid)).thenReturn(expected);
 
-        ResponseEntity<InterbankPaymentStatusResponse> response = interbankPaymentController.statusByUetr(uetr);
+        ResponseEntity<InterbankPaymentAckResponse> response = interbankPaymentController.status(paymentLineUuid);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).isEqualTo(expected);
     }
 
     @Test
-    void statusByUetr_debePropagarNotFound_cuandoNoExiste() {
-        String uetr = UUID.randomUUID().toString();
-        when(inboundPaymentService.getStatusByUetr(uetr))
-                .thenThrow(new InboundPaymentNotFoundException("No existe un pago interbancario con uetr=" + uetr));
+    void status_debePropagarNotFound_cuandoNoExiste() {
+        String paymentLineUuid = UUID.randomUUID().toString();
+        when(inboundPaymentService.getStatusByPaymentLineUuid(paymentLineUuid))
+                .thenThrow(new InboundPaymentNotFoundException("No existe una transferencia para paymentLineUuid=" + paymentLineUuid));
 
-        assertThatThrownBy(() -> interbankPaymentController.statusByUetr(uetr))
+        assertThatThrownBy(() -> interbankPaymentController.status(paymentLineUuid))
                 .isInstanceOf(InboundPaymentNotFoundException.class);
     }
 
-    @Test
-    void statusByOriginTransaction_debeRetornar200ConElStatus_cuandoExiste() {
-        InterbankPaymentStatusResponse expected = new InterbankPaymentStatusResponse(
-                null, "002", "PICHINCHA-TX-1", "PDNG", "tx-123", null, null);
-        when(inboundPaymentService.getStatusByOriginTransaction("002", "PICHINCHA-TX-1")).thenReturn(expected);
-
-        ResponseEntity<InterbankPaymentStatusResponse> response =
-                interbankPaymentController.statusByOriginTransaction("002", "PICHINCHA-TX-1");
-
-        assertThat(response.getStatusCode().value()).isEqualTo(200);
-        assertThat(response.getBody()).isEqualTo(expected);
+    private InterbankPaymentAckResponse ackResponse(InterbankPaymentRequest request, String status, boolean idempotencyReplayed) {
+        return new InterbankPaymentAckResponse(
+                "tx-123", request.sourceTransferUuid(), request.paymentLineUuid(), request.batchUuid(),
+                "ENTRANTE", status, request.sourceRoutingCode(), request.destinationRoutingCode(),
+                request.sourceAccountNumber(), request.destinationAccountNumber(), request.amount(),
+                request.currency(), null, null, null, null, null, null, null,
+                request.accountingDate(), null, idempotencyReplayed, request.correlationId());
     }
 
-    @Test
-    void statusByOriginTransaction_debePropagarNotFound_cuandoNoExiste() {
-        when(inboundPaymentService.getStatusByOriginTransaction("999", "no-existe"))
-                .thenThrow(new InboundPaymentNotFoundException("No existe"));
-
-        assertThatThrownBy(() -> interbankPaymentController.statusByOriginTransaction("999", "no-existe"))
-                .isInstanceOf(InboundPaymentNotFoundException.class);
+    private InterbankPaymentRequest request(String sourceTransferUuid, String paymentLineUuid) {
+        return new InterbankPaymentRequest(
+                sourceTransferUuid, paymentLineUuid, null, "BQLL001", "BQTO001",
+                "1010100001", "2200000001", "1790012345001", "Empresa Origen S.A.",
+                "0102030405", "Juan Perez", "juan.perez@correo.test", "Pago de proveedor",
+                new BigDecimal("150.00"), "USD", LocalDate.of(2026, 8, 1),
+                paymentLineUuid == null ? UUID.randomUUID().toString() : paymentLineUuid);
     }
 
     private InterbankPaymentRequest validRequest() {
-        return new InterbankPaymentRequest(
-                UUID.randomUUID().toString(), "002", "PICHINCHA-TX-00123", "2200000001",
-                new BigDecimal("150.00"), "USD", "Pago de proveedor", "Juan Perez",
-                LocalDate.of(2026, 8, 1));
+        String uuid = UUID.randomUUID().toString();
+        return request(UUID.randomUUID().toString(), uuid);
     }
 }

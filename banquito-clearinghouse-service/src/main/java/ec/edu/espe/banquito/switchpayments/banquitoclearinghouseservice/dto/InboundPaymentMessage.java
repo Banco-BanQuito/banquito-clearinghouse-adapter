@@ -5,53 +5,86 @@ import java.time.LocalDate;
 
 public class InboundPaymentMessage {
 
-    /**
-     * Parte 2 (interoperabilidad REST real): identificador end-to-end ISO 20022 (UUID v4)
-     * de esta integracion nueva, generado por el banco origen. Campo DISTINTO de
-     * originTransactionId: ese sigue siendo el identificador ya usado y probado del lado
-     * gRPC/interno (Fase 4); uetr es exclusivo del transporte REST y puede ser null para
-     * mensajes que entran por gRPC.
-     */
-    private String uetr;
+    private String sourceTransferUuid;
 
-    private String originBankCode;
+    private String paymentLineUuid;
 
-    private String originTransactionId;
+    private String batchUuid;
+
+    private String sourceRoutingCode;
+
+    private String destinationRoutingCode;
+
+    private String sourceAccountNumber;
 
     private String destinationAccountNumber;
+
+    private String originatorIdentification;
+
+    private String originatorName;
+
+    private String beneficiaryIdentification;
+
+    private String beneficiaryName;
+
+    private String beneficiaryEmail;
+
+    private String concept;
 
     private BigDecimal amount;
 
     private String currency;
 
-    private String concept;
+    private LocalDate accountingDate;
 
-    private String beneficiaryName;
+    private String correlationId;
 
-    private LocalDate valueDate;
-
-    public String getUetr() {
-        return uetr;
+    public String getSourceTransferUuid() {
+        return sourceTransferUuid;
     }
 
-    public void setUetr(String uetr) {
-        this.uetr = uetr;
+    public void setSourceTransferUuid(String sourceTransferUuid) {
+        this.sourceTransferUuid = sourceTransferUuid;
     }
 
-    public String getOriginBankCode() {
-        return originBankCode;
+    public String getPaymentLineUuid() {
+        return paymentLineUuid;
     }
 
-    public void setOriginBankCode(String originBankCode) {
-        this.originBankCode = originBankCode;
+    public void setPaymentLineUuid(String paymentLineUuid) {
+        this.paymentLineUuid = paymentLineUuid;
     }
 
-    public String getOriginTransactionId() {
-        return originTransactionId;
+    public String getBatchUuid() {
+        return batchUuid;
     }
 
-    public void setOriginTransactionId(String originTransactionId) {
-        this.originTransactionId = originTransactionId;
+    public void setBatchUuid(String batchUuid) {
+        this.batchUuid = batchUuid;
+    }
+
+    public String getSourceRoutingCode() {
+        return sourceRoutingCode;
+    }
+
+    public void setSourceRoutingCode(String sourceRoutingCode) {
+        this.sourceRoutingCode = sourceRoutingCode;
+    }
+
+    public String getDestinationRoutingCode() {
+        return destinationRoutingCode;
+    }
+
+    public void setDestinationRoutingCode(String destinationRoutingCode) {
+        this.destinationRoutingCode = destinationRoutingCode;
+    }
+
+    public String getSourceAccountNumber() {
+        return sourceAccountNumber;
+    }
+
+    public void setSourceAccountNumber(String sourceAccountNumber) {
+        this.sourceAccountNumber = sourceAccountNumber;
     }
 
     public String getDestinationAccountNumber() {
@@ -60,6 +93,54 @@ public class InboundPaymentMessage {
 
     public void setDestinationAccountNumber(String destinationAccountNumber) {
         this.destinationAccountNumber = destinationAccountNumber;
+    }
+
+    public String getOriginatorIdentification() {
+        return originatorIdentification;
+    }
+
+    public void setOriginatorIdentification(String originatorIdentification) {
+        this.originatorIdentification = originatorIdentification;
+    }
+
+    public String getOriginatorName() {
+        return originatorName;
+    }
+
+    public void setOriginatorName(String originatorName) {
+        this.originatorName = originatorName;
+    }
+
+    public String getBeneficiaryIdentification() {
+        return beneficiaryIdentification;
+    }
+
+    public void setBeneficiaryIdentification(String beneficiaryIdentification) {
+        this.beneficiaryIdentification = beneficiaryIdentification;
+    }
+
+    public String getBeneficiaryName() {
+        return beneficiaryName;
+    }
+
+    public void setBeneficiaryName(String beneficiaryName) {
+        this.beneficiaryName = beneficiaryName;
+    }
+
+    public String getBeneficiaryEmail() {
+        return beneficiaryEmail;
+    }
+
+    public void setBeneficiaryEmail(String beneficiaryEmail) {
+        this.beneficiaryEmail = beneficiaryEmail;
+    }
+
+    public String getConcept() {
+        return concept;
+    }
+
+    public void setConcept(String concept) {
+        this.concept = concept;
     }
 
     public BigDecimal getAmount() {
@@ -78,27 +159,19 @@ public class InboundPaymentMessage {
         this.currency = currency;
     }
 
-    public String getConcept() {
-        return concept;
+    public LocalDate getAccountingDate() {
+        return accountingDate;
     }
 
-    public void setConcept(String concept) {
-        this.concept = concept;
+    public void setAccountingDate(LocalDate accountingDate) {
+        this.accountingDate = accountingDate;
     }
 
-    public String getBeneficiaryName() {
-        return beneficiaryName;
+    public String getCorrelationId() {
+        return correlationId;
     }
 
-    public void setBeneficiaryName(String beneficiaryName) {
-        this.beneficiaryName = beneficiaryName;
-    }
-
-    public LocalDate getValueDate() {
-        return valueDate;
-    }
-
-    public void setValueDate(LocalDate valueDate) {
-        this.valueDate = valueDate;
+    public void setCorrelationId(String correlationId) {
+        this.correlationId = correlationId;
     }
 }

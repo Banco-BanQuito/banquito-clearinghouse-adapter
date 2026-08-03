@@ -2,6 +2,16 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto;
 
 import java.math.BigDecimal;
 
+/**
+ * Contrato interno hacia account-core-service (POST /api/v2/payments/inbound-credit) --
+ * account-core-service no conoce el vocabulario del contrato banco a banco (paymentLineUuid,
+ * sourceRoutingCode, etc.); esta clase junto con InboundPaymentService son la capa
+ * anticorrupcion que traduce de InboundPaymentMessage/InboundPayment (vocabulario
+ * interbancario) a los nombres que account-core-service ya espera y usa para su
+ * idempotencyKey determinístico ("INBOUND:" + originBankCode + ":" + originTransactionId).
+ * No renombrar estos dos campos sin actualizar tambien InboundCreditReqDTO y
+ * AccountTransactionService.executeInboundCredit() en banquito-account-core-service.
+ */
 public class InboundCreditRequest {
 
     private String originBankCode;

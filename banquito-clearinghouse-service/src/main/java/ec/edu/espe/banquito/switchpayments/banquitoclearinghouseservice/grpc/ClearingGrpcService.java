@@ -107,16 +107,23 @@ public class ClearingGrpcService extends ClearingServiceGrpc.ClearingServiceImpl
         }
     }
 
+    /**
+     * Contrato gRPC provisional (otro grupo, ver clearing_service.proto), independiente del
+     * contrato REST de InterbankPaymentController. origin_bank_code/origin_transaction_id no
+     * traen un UUID como paymentLineUuid del contrato REST -- se usa el propio
+     * origin_transaction_id como paymentLineUuid interno (unico identificador que este
+     * camino gRPC ofrece), sin garantia de formato UUID.
+     */
     private InboundPaymentMessage toMessage(InboundPaymentRequest request) {
         InboundPaymentMessage message = new InboundPaymentMessage();
-        message.setOriginBankCode(required(request.getOriginBankCode(), "origin_bank_code"));
-        message.setOriginTransactionId(required(request.getOriginTransactionId(), "origin_transaction_id"));
+        message.setSourceRoutingCode(required(request.getOriginBankCode(), "origin_bank_code"));
+        message.setPaymentLineUuid(required(request.getOriginTransactionId(), "origin_transaction_id"));
         message.setDestinationAccountNumber(required(request.getDestinationAccountNumber(), "destination_account_number"));
         message.setAmount(new BigDecimal(required(request.getAmount(), "amount")));
         message.setCurrency(required(request.getCurrency(), "currency"));
         message.setConcept(request.getConcept());
         message.setBeneficiaryName(request.getBeneficiaryName());
-        message.setValueDate(LocalDate.parse(required(request.getValueDate(), "value_date")));
+        message.setAccountingDate(LocalDate.parse(required(request.getValueDate(), "value_date")));
         return message;
     }
 }

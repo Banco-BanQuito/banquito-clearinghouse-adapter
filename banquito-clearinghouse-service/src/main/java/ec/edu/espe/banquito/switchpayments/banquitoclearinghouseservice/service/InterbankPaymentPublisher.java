@@ -55,8 +55,8 @@ public class InterbankPaymentPublisher {
             ApiFuture<String> messageId = publisher().publish(pubsubMessage);
             messageId.get();
         } catch (Exception e) {
-            log.error("No se pudo publicar el pago interbancario admitido en Pub/Sub. uetr={}, originBankCode={}, originTransactionId={}, cause={}",
-                    message.getUetr(), message.getOriginBankCode(), message.getOriginTransactionId(), e.getMessage(), e);
+            log.error("No se pudo publicar el pago interbancario admitido en Pub/Sub. paymentLineUuid={}, sourceRoutingCode={}, cause={}",
+                    message.getPaymentLineUuid(), message.getSourceRoutingCode(), e.getMessage(), e);
             throw new IllegalStateException("No se pudo publicar el pago interbancario admitido en Pub/Sub", e);
         }
     }

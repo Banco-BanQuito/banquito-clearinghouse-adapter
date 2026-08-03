@@ -14,30 +14,52 @@ public class InboundPayment {
     @Id
     private String id;
 
+    private String sourceTransferUuid;
+
     /**
-     * Parte 2 (interoperabilidad REST real): identificador end-to-end ISO 20022 (UUID v4)
-     * generado por el banco origen para esta integracion nueva. Campo DISTINTO de
-     * originTransactionId (ver InboundPaymentMessage.uetr); null para pagos que entraron
-     * por el RPC gRPC de Fase 4, que no lo conocen.
+     * Llave idempotente del contrato interbancario (debe coincidir con el header
+     * Idempotency-Key y con el paymentLineUuid del payload). Clave real de dedupe:
+     * (sourceRoutingCode, paymentLineUuid).
      */
     @Indexed(unique = true, sparse = true)
-    private String uetr;
+    private String paymentLineUuid;
 
-    private String originBankCode;
+    private String batchUuid;
 
-    private String originTransactionId;
+    private String sourceRoutingCode;
+
+    private String destinationRoutingCode;
+
+    private String sourceAccountNumber;
 
     private String destinationAccountNumber;
+
+    private String originatorIdentification;
+
+    private String originatorName;
+
+    private String beneficiaryIdentification;
+
+    private String beneficiaryName;
+
+    private String beneficiaryEmail;
+
+    private String concept;
 
     private BigDecimal amount;
 
     private String currency;
 
-    private String concept;
+    private LocalDate accountingDate;
 
-    private String beneficiaryName;
+    private String correlationId;
 
-    private LocalDate valueDate;
+    /**
+     * Hash del payload original admitido (ver InboundPaymentService.hashPayload), usado
+     * para detectar un reenvio del mismo paymentLineUuid con datos distintos
+     * (INTERBANK_IDEMPOTENCY_PAYLOAD_CONFLICT, HTTP 409) en vez de un reintento identico.
+     */
+    private String payloadHash;
 
     private String banquitoTransactionId;
 
@@ -48,7 +70,7 @@ public class InboundPayment {
     private LocalDateTime createdAt;
 
     /**
-     * Fase 4 Parte 4: momento del ultimo cambio de estado (creacion, o cada transicion en
+     * Momento del ultimo cambio de estado (creacion, o cada transicion en
      * process()/credit()). Permite al banco origen, al consultar el status, distinguir un
      * PDNG "recien admitido, en curso" de uno "colgado desde hace horas" -- createdAt por si
      * solo no sirve para eso porque nunca se actualiza en reintentos.
@@ -56,11 +78,10 @@ public class InboundPayment {
     private LocalDateTime updatedAt;
 
     /**
-     * Fase 4 Parte 2: numero de intento de credito para esta (originBankCode,
-     * originTransactionId), empezando en 1. Se incrementa cada vez que se reintenta
-     * despues de que el intento anterior quedo en COMPENSATED, y determina el sufijo del
-     * entryUuid usado en account-core-service (ver InboundPaymentService.deriveEntryUuid):
-     * intento 1 usa idempotencyKey + ":INBOUND", intentos siguientes usan
+     * Numero de intento de credito para este paymentLineUuid, empezando en 1. Se incrementa
+     * cada vez que se reintenta despues de que el intento anterior quedo en COMPENSATED, y
+     * determina el sufijo del entryUuid usado en account-core-service: intento 1 usa
+     * idempotencyKey + ":INBOUND", intentos siguientes usan
      * idempotencyKey + ":INBOUND:" + attemptCount, para no colisionar con un asiento ya
      * reversado bajo la clave del intento anterior.
      */
@@ -74,28 +95,52 @@ public class InboundPayment {
         this.id = id;
     }
 
-    public String getUetr() {
-        return uetr;
+    public String getSourceTransferUuid() {
+        return sourceTransferUuid;
     }
 
-    public void setUetr(String uetr) {
-        this.uetr = uetr;
+    public void setSourceTransferUuid(String sourceTransferUuid) {
+        this.sourceTransferUuid = sourceTransferUuid;
     }
 
-    public String getOriginBankCode() {
-        return originBankCode;
+    public String getPaymentLineUuid() {
+        return paymentLineUuid;
     }
 
-    public void setOriginBankCode(String originBankCode) {
-        this.originBankCode = originBankCode;
+    public void setPaymentLineUuid(String paymentLineUuid) {
+        this.paymentLineUuid = paymentLineUuid;
     }
 
-    public String getOriginTransactionId() {
-        return originTransactionId;
+    public String getBatchUuid() {
+        return batchUuid;
     }
 
-    public void setOriginTransactionId(String originTransactionId) {
-        this.originTransactionId = originTransactionId;
+    public void setBatchUuid(String batchUuid) {
+        this.batchUuid = batchUuid;
+    }
+
+    public String getSourceRoutingCode() {
+        return sourceRoutingCode;
+    }
+
+    public void setSourceRoutingCode(String sourceRoutingCode) {
+        this.sourceRoutingCode = sourceRoutingCode;
+    }
+
+    public String getDestinationRoutingCode() {
+        return destinationRoutingCode;
+    }
+
+    public void setDestinationRoutingCode(String destinationRoutingCode) {
+        this.destinationRoutingCode = destinationRoutingCode;
+    }
+
+    public String getSourceAccountNumber() {
+        return sourceAccountNumber;
+    }
+
+    public void setSourceAccountNumber(String sourceAccountNumber) {
+        this.sourceAccountNumber = sourceAccountNumber;
     }
 
     public String getDestinationAccountNumber() {
@@ -104,6 +149,54 @@ public class InboundPayment {
 
     public void setDestinationAccountNumber(String destinationAccountNumber) {
         this.destinationAccountNumber = destinationAccountNumber;
+    }
+
+    public String getOriginatorIdentification() {
+        return originatorIdentification;
+    }
+
+    public void setOriginatorIdentification(String originatorIdentification) {
+        this.originatorIdentification = originatorIdentification;
+    }
+
+    public String getOriginatorName() {
+        return originatorName;
+    }
+
+    public void setOriginatorName(String originatorName) {
+        this.originatorName = originatorName;
+    }
+
+    public String getBeneficiaryIdentification() {
+        return beneficiaryIdentification;
+    }
+
+    public void setBeneficiaryIdentification(String beneficiaryIdentification) {
+        this.beneficiaryIdentification = beneficiaryIdentification;
+    }
+
+    public String getBeneficiaryName() {
+        return beneficiaryName;
+    }
+
+    public void setBeneficiaryName(String beneficiaryName) {
+        this.beneficiaryName = beneficiaryName;
+    }
+
+    public String getBeneficiaryEmail() {
+        return beneficiaryEmail;
+    }
+
+    public void setBeneficiaryEmail(String beneficiaryEmail) {
+        this.beneficiaryEmail = beneficiaryEmail;
+    }
+
+    public String getConcept() {
+        return concept;
+    }
+
+    public void setConcept(String concept) {
+        this.concept = concept;
     }
 
     public BigDecimal getAmount() {
@@ -122,28 +215,28 @@ public class InboundPayment {
         this.currency = currency;
     }
 
-    public String getConcept() {
-        return concept;
+    public LocalDate getAccountingDate() {
+        return accountingDate;
     }
 
-    public void setConcept(String concept) {
-        this.concept = concept;
+    public void setAccountingDate(LocalDate accountingDate) {
+        this.accountingDate = accountingDate;
     }
 
-    public String getBeneficiaryName() {
-        return beneficiaryName;
+    public String getCorrelationId() {
+        return correlationId;
     }
 
-    public void setBeneficiaryName(String beneficiaryName) {
-        this.beneficiaryName = beneficiaryName;
+    public void setCorrelationId(String correlationId) {
+        this.correlationId = correlationId;
     }
 
-    public LocalDate getValueDate() {
-        return valueDate;
+    public String getPayloadHash() {
+        return payloadHash;
     }
 
-    public void setValueDate(LocalDate valueDate) {
-        this.valueDate = valueDate;
+    public void setPayloadHash(String payloadHash) {
+        this.payloadHash = payloadHash;
     }
 
     public String getBanquitoTransactionId() {

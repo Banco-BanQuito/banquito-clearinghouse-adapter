@@ -2,10 +2,11 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service
 
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundCreditRequest;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InboundPaymentMessage;
-import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentStatusResponse;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentAckResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.enums.InboundPaymentStatus;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundCompensatedException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentPayloadConflictException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.model.InboundPayment;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.provider.InboundCreditProvider;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.repository.InboundPaymentRepository;
@@ -14,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
@@ -25,11 +28,11 @@ public class InboundPaymentService {
     private static final Logger log = LoggerFactory.getLogger(InboundPaymentService.class);
 
     /**
-     * Namespace para derivar banquitoTransactionId de forma deterministica a partir de
-     * (originBankCode, originTransactionId), igual que CoreSettlementService.deriveSettlementUuid
-     * para el flujo saliente. Reintentar el mismo mensaje exacto produce el mismo id
-     * (identifica el pago de cara al banco origen, independiente de cuantos intentos internos
-     * hicieron falta para acreditarlo).
+     * Namespace para derivar banquitoTransactionId (interbankTransferUuid) de forma
+     * deterministica a partir de paymentLineUuid, igual que CoreSettlementService.
+     * deriveSettlementUuid para el flujo saliente. Reintentar el mismo mensaje exacto
+     * produce el mismo id (identifica el pago de cara al banco origen, independiente de
+     * cuantos intentos internos hicieron falta para acreditarlo).
      */
     private static final String INBOUND_UUID_NAMESPACE = "INBOUND-PAYMENT:";
 
@@ -43,64 +46,65 @@ public class InboundPaymentService {
     }
 
     /**
-     * Parte 2 (interoperabilidad REST real): admite un mensaje SIN llamar todavia a
-     * account-core-service, para que InterbankPaymentController pueda responder RCVD de
-     * forma sincrona y rapida. Si (originBankCode, originTransactionId) ya existe, devuelve
-     * el registro existente tal cual (mismo comportamiento de dedupe que process(); un
-     * duplicado exacto NUNCA reprocesa, solo re-responde con el banquitoTransactionId ya
-     * asignado). Si es nuevo, persiste RECEIVED con uetr y attemptCount=1 y retorna ese
-     * registro, sin acreditar. El credito real ocurre despues, de forma asincrona, en
-     * process(message) (ver InterbankPaymentService): process() encuentra este mismo
-     * registro en su rama RECEIVED (disenada originalmente para recuperarse de un crash
-     * entre persistencia y credito) y continua desde ahi sin duplicar logica.
+     * Admite un mensaje SIN llamar todavia a account-core-service, para que
+     * InterbankPaymentController pueda responder rapido de forma sincrona. Si
+     * paymentLineUuid ya existe: payload identico -> devuelve el registro existente tal
+     * cual (dedupe, isNew=false); payload distinto -> lanza
+     * InboundPaymentPayloadConflictException (409, INTERBANK_IDEMPOTENCY_PAYLOAD_CONFLICT).
+     * Si es nuevo, persiste RECEIVED con attemptCount=1 y retorna ese registro, sin
+     * acreditar. El credito real ocurre despues, de forma asincrona, en process(message).
      */
     public AdmissionResult admit(InboundPaymentMessage message) {
+        String incomingHash = hashPayload(message);
         Optional<InboundPayment> existing = inboundPaymentRepository
-                .findFirstByOriginBankCodeAndOriginTransactionId(
-                        message.getOriginBankCode(), message.getOriginTransactionId());
+                .findFirstByPaymentLineUuid(message.getPaymentLineUuid());
         if (existing.isPresent()) {
-            return new AdmissionResult(existing.get(), false);
+            InboundPayment payment = existing.get();
+            if (!incomingHash.equals(payment.getPayloadHash())) {
+                throw new InboundPaymentPayloadConflictException(
+                        "El paymentLineUuid " + message.getPaymentLineUuid()
+                                + " ya fue admitido con un payload diferente");
+            }
+            return new AdmissionResult(payment, false);
         }
-        return new AdmissionResult(persistNewPayment(message), true);
+        return new AdmissionResult(persistNewPayment(message, incomingHash), true);
     }
 
     /**
      * isNew=true: el registro se acaba de persistir en RECEIVED y todavia no se llamo a
      * account-core-service (el llamador debe disparar process(message) para completar el
-     * credito). isNew=false: ya existia un registro previo para esta
-     * (originBankCode, originTransactionId); el llamador NO debe reprocesar, solo
-     * re-responder con payment.getBanquitoTransactionId().
+     * credito). isNew=false: ya existia un registro previo identico para este
+     * paymentLineUuid; el llamador NO debe reprocesar, solo re-responder con el resultado
+     * ya persistido.
      */
     public record AdmissionResult(InboundPayment payment, boolean isNew) {
     }
 
     /**
-     * Fase 4 Parte 2: decide, segun el InboundPayment existente para esta
-     * (originBankCode, originTransactionId), si el mensaje es nuevo, un duplicado real de
-     * un intento ya exitoso, o un reintento genuino tras un fallo compensado. Ver la maquina
-     * de estados documentada en InboundPaymentStatus.
+     * Decide, segun el InboundPayment existente para este paymentLineUuid, si el mensaje es
+     * nuevo, un duplicado real de un intento ya exitoso, o un reintento genuino tras un
+     * fallo compensado. Ver la maquina de estados documentada en InboundPaymentStatus.
      */
     public InboundPayment process(InboundPaymentMessage message) {
         Optional<InboundPayment> existing = inboundPaymentRepository
-                .findFirstByOriginBankCodeAndOriginTransactionId(
-                        message.getOriginBankCode(), message.getOriginTransactionId());
+                .findFirstByPaymentLineUuid(message.getPaymentLineUuid());
 
         if (existing.isEmpty()) {
-            InboundPayment payment = persistNewPayment(message);
+            InboundPayment payment = persistNewPayment(message, hashPayload(message));
             return credit(payment, 1);
         }
 
         InboundPayment payment = existing.get();
         return switch (payment.getStatus()) {
             case CREDITED -> {
-                log.info("Pago entrante {}/{} ya fue acreditado (intento {}), no se reprocesa",
-                        message.getOriginBankCode(), message.getOriginTransactionId(), payment.getAttemptCount());
+                log.info("Pago entrante {} ya fue acreditado (intento {}), no se reprocesa",
+                        payment.getPaymentLineUuid(), payment.getAttemptCount());
                 yield payment;
             }
             case COMPENSATED -> {
                 int nextAttempt = payment.getAttemptCount() + 1;
-                log.info("Pago entrante {}/{} fue compensado en el intento {}, reintentando como intento {} con entryUuid nuevo",
-                        message.getOriginBankCode(), message.getOriginTransactionId(), payment.getAttemptCount(), nextAttempt);
+                log.info("Pago entrante {} fue compensado en el intento {}, reintentando como intento {} con entryUuid nuevo",
+                        payment.getPaymentLineUuid(), payment.getAttemptCount(), nextAttempt);
                 // Se persiste el attemptCount incrementado y se vuelve a RECEIVED ANTES de
                 // llamar a account-core-service (no despues, junto con el resultado): si el
                 // proceso muere entre el envio de esta request y la recepcion de la respuesta,
@@ -126,28 +130,35 @@ public class InboundPaymentService {
                 // postear con exito, accounting-service dedupea por entryUuid y
                 // account-core-service devuelve 409 para el mismo transactionUuid (no se
                 // duplica el asiento ni el credito).
-                log.info("Pago entrante {}/{} esta en {} (intento {}), reintentando con el mismo entryUuid",
-                        message.getOriginBankCode(), message.getOriginTransactionId(),
-                        payment.getStatus(), payment.getAttemptCount());
+                log.info("Pago entrante {} esta en {} (intento {}), reintentando con el mismo entryUuid",
+                        payment.getPaymentLineUuid(), payment.getStatus(), payment.getAttemptCount());
                 payment.setFailureMessage(null);
                 yield credit(payment, payment.getAttemptCount());
             }
         };
     }
 
-    private InboundPayment persistNewPayment(InboundPaymentMessage message) {
+    private InboundPayment persistNewPayment(InboundPaymentMessage message, String payloadHash) {
         InboundPayment payment = new InboundPayment();
-        payment.setUetr(message.getUetr());
-        payment.setOriginBankCode(message.getOriginBankCode());
-        payment.setOriginTransactionId(message.getOriginTransactionId());
+        payment.setSourceTransferUuid(message.getSourceTransferUuid());
+        payment.setPaymentLineUuid(message.getPaymentLineUuid());
+        payment.setBatchUuid(message.getBatchUuid());
+        payment.setSourceRoutingCode(message.getSourceRoutingCode());
+        payment.setDestinationRoutingCode(message.getDestinationRoutingCode());
+        payment.setSourceAccountNumber(message.getSourceAccountNumber());
         payment.setDestinationAccountNumber(message.getDestinationAccountNumber());
+        payment.setOriginatorIdentification(message.getOriginatorIdentification());
+        payment.setOriginatorName(message.getOriginatorName());
+        payment.setBeneficiaryIdentification(message.getBeneficiaryIdentification());
+        payment.setBeneficiaryName(message.getBeneficiaryName());
+        payment.setBeneficiaryEmail(message.getBeneficiaryEmail());
+        payment.setConcept(message.getConcept());
         payment.setAmount(message.getAmount());
         payment.setCurrency(message.getCurrency());
-        payment.setConcept(message.getConcept());
-        payment.setBeneficiaryName(message.getBeneficiaryName());
-        payment.setValueDate(message.getValueDate());
-        payment.setBanquitoTransactionId(
-                deriveBanquitoTransactionId(message.getOriginBankCode(), message.getOriginTransactionId()));
+        payment.setAccountingDate(message.getAccountingDate());
+        payment.setCorrelationId(message.getCorrelationId());
+        payment.setPayloadHash(payloadHash);
+        payment.setBanquitoTransactionId(deriveBanquitoTransactionId(message.getPaymentLineUuid()));
         payment.setStatus(InboundPaymentStatus.RECEIVED);
         payment.setAttemptCount(1);
         LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
@@ -158,8 +169,8 @@ public class InboundPaymentService {
 
     private InboundPayment credit(InboundPayment payment, int attemptNumber) {
         InboundCreditRequest request = new InboundCreditRequest();
-        request.setOriginBankCode(payment.getOriginBankCode());
-        request.setOriginTransactionId(payment.getOriginTransactionId());
+        request.setOriginBankCode(payment.getSourceRoutingCode());
+        request.setOriginTransactionId(payment.getPaymentLineUuid());
         request.setDestinationAccountNumber(payment.getDestinationAccountNumber());
         request.setAmount(payment.getAmount());
         request.setBeneficiaryName(payment.getBeneficiaryName());
@@ -177,8 +188,8 @@ public class InboundPaymentService {
             payment.setStatus(InboundPaymentStatus.COMPENSATED);
             payment.setFailureMessage(ex.getMessage());
             payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
-            log.error("Fallo compensado el credito del pago entrante {}/{} (intento {}): {}",
-                    payment.getOriginBankCode(), payment.getOriginTransactionId(), attemptNumber, ex.getMessage());
+            log.error("Fallo compensado el credito del pago entrante {} (intento {}): {}",
+                    payment.getPaymentLineUuid(), attemptNumber, ex.getMessage());
             return inboundPaymentRepository.save(payment);
         } catch (Exception ex) {
             // Fallo antes de que account-core-service tocara contabilidad (ej. banco
@@ -187,57 +198,69 @@ public class InboundPaymentService {
             payment.setStatus(InboundPaymentStatus.FAILED);
             payment.setFailureMessage(ex.getMessage());
             payment.setUpdatedAt(LocalDateTime.now(ZoneId.systemDefault()));
-            log.error("Fallo el credito del pago entrante {}/{} (intento {}): {}",
-                    payment.getOriginBankCode(), payment.getOriginTransactionId(), attemptNumber, ex.getMessage());
+            log.error("Fallo el credito del pago entrante {} (intento {}): {}",
+                    payment.getPaymentLineUuid(), attemptNumber, ex.getMessage());
             return inboundPaymentRepository.save(payment);
         }
     }
 
     /**
-     * Fase 4 Parte 4 (consulta de estado, pull): el banco origen reintenta un envio sin
-     * saber si ya fue admitido consultando aqui primero, por uetr. Traduce InboundPaymentStatus
-     * (dominio interno) a codigo ISO 20022 (RECEIVED->PDNG, CREDITED->ACSC,
-     * FAILED/COMPENSATED->RJCT: ambos terminan sin credito bajo la clave de ese intento,
-     * indistinguibles de cara al banco origen).
+     * Consulta de estado (pull): el banco origen reintenta un envio sin saber si ya fue
+     * admitido consultando aqui primero, por paymentLineUuid -- misma clave de dedupe que
+     * usa process()/admit().
      */
-    public InterbankPaymentStatusResponse getStatusByUetr(String uetr) {
-        InboundPayment payment = inboundPaymentRepository.findFirstByUetr(uetr)
+    public InterbankPaymentAckResponse getStatusByPaymentLineUuid(String paymentLineUuid) {
+        InboundPayment payment = inboundPaymentRepository.findFirstByPaymentLineUuid(paymentLineUuid)
                 .orElseThrow(() -> new InboundPaymentNotFoundException(
-                        "No existe un pago interbancario con uetr=" + uetr));
-        return toStatusResponse(payment);
+                        "No existe una transferencia para paymentLineUuid=" + paymentLineUuid));
+        return toResponse(payment, false);
     }
 
-    /**
-     * Respaldo para bancos que no conocen/no propagan el uetr en su reintento y solo tienen
-     * su propio (originBankCode, originTransactionId) -- misma clave de dedupe que usa
-     * process()/admit().
-     */
-    public InterbankPaymentStatusResponse getStatusByOriginTransaction(String originBankCode, String originTransactionId) {
-        InboundPayment payment = inboundPaymentRepository
-                .findFirstByOriginBankCodeAndOriginTransactionId(originBankCode, originTransactionId)
-                .orElseThrow(() -> new InboundPaymentNotFoundException(
-                        "No existe un pago interbancario con originBankCode=" + originBankCode
-                                + " y originTransactionId=" + originTransactionId));
-        return toStatusResponse(payment);
-    }
-
-    private InterbankPaymentStatusResponse toStatusResponse(InboundPayment payment) {
-        return new InterbankPaymentStatusResponse(
-                payment.getUetr(),
-                payment.getOriginBankCode(),
-                payment.getOriginTransactionId(),
-                toIso20022Status(payment.getStatus()),
+    public InterbankPaymentAckResponse toResponse(InboundPayment payment, boolean idempotencyReplayed) {
+        boolean rejected = payment.getStatus() == InboundPaymentStatus.FAILED
+                || payment.getStatus() == InboundPaymentStatus.COMPENSATED;
+        return new InterbankPaymentAckResponse(
                 payment.getBanquitoTransactionId(),
-                toExternalFailureMessage(payment.getStatus()),
-                payment.getUpdatedAt());
+                payment.getSourceTransferUuid(),
+                payment.getPaymentLineUuid(),
+                payment.getBatchUuid(),
+                "ENTRANTE",
+                toContractStatus(payment.getStatus()),
+                payment.getSourceRoutingCode(),
+                payment.getDestinationRoutingCode(),
+                payment.getSourceAccountNumber(),
+                payment.getDestinationAccountNumber(),
+                payment.getAmount(),
+                payment.getCurrency(),
+                payment.getStatus() == InboundPaymentStatus.CREDITED ? payment.getBanquitoTransactionId() : null,
+                null,
+                null,
+                null,
+                payment.getStatus() == InboundPaymentStatus.CREDITED
+                        ? "IBI-" + receiptSuffix(payment.getBanquitoTransactionId())
+                        : null,
+                rejected ? toErrorCode(payment.getStatus()) : null,
+                rejected ? toExternalFailureMessage(payment.getStatus()) : null,
+                payment.getAccountingDate(),
+                payment.getUpdatedAt(),
+                idempotencyReplayed,
+                payment.getCorrelationId());
+    }
+
+    private String toContractStatus(InboundPaymentStatus status) {
+        return switch (status) {
+            case RECEIVED -> "PREPARED";
+            case CREDITED -> "SETTLED";
+            case FAILED, COMPENSATED -> "REJECTED";
+        };
     }
 
     /**
      * failureMessage interno (InboundPayment.failureMessage) puede contener el mensaje crudo
      * de excepciones de account-core-service/accounting-service (nombres de tabla, causas
-     * internas) -- nunca se expone tal cual a un banco externo via el endpoint de status. Solo
-     * se comunica un motivo generico segun el estado; el detalle real queda en logs (ver
-     * credit()) para diagnostico interno.
+     * internas) -- nunca se expone tal cual a un banco externo. Solo se comunica un motivo
+     * generico segun el estado; el detalle real queda en logs (ver credit()) para
+     * diagnostico interno.
      */
     private String toExternalFailureMessage(InboundPaymentStatus status) {
         return switch (status) {
@@ -247,18 +270,60 @@ public class InboundPaymentService {
         };
     }
 
-    private String toIso20022Status(InboundPaymentStatus status) {
+    private String toErrorCode(InboundPaymentStatus status) {
         return switch (status) {
-            case RECEIVED -> "PDNG";
-            case CREDITED -> "ACSC";
-            case FAILED, COMPENSATED -> "RJCT";
+            case FAILED, COMPENSATED -> "INTERBANK_CREDIT_FAILED";
+            case RECEIVED, CREDITED -> null;
         };
     }
 
-    static String deriveBanquitoTransactionId(String originBankCode, String originTransactionId) {
+    private static String receiptSuffix(String banquitoTransactionId) {
+        String noDashes = banquitoTransactionId.replace("-", "");
+        return noDashes.substring(0, Math.min(8, noDashes.length())).toUpperCase();
+    }
+
+    static String deriveBanquitoTransactionId(String paymentLineUuid) {
         return UUID.nameUUIDFromBytes(
-                (INBOUND_UUID_NAMESPACE + originBankCode + ":" + originTransactionId)
-                        .getBytes(StandardCharsets.UTF_8)
+                (INBOUND_UUID_NAMESPACE + paymentLineUuid).getBytes(StandardCharsets.UTF_8)
         ).toString();
+    }
+
+    /**
+     * Hash del payload completo admitido (todos los campos de negocio, no metadata como
+     * timestamps), usado para distinguir un reintento identico de un reenvio del mismo
+     * paymentLineUuid con datos distintos (ver admit()).
+     */
+    static String hashPayload(InboundPaymentMessage message) {
+        String canonical = String.join("|",
+                nullToEmpty(message.getSourceTransferUuid()),
+                nullToEmpty(message.getPaymentLineUuid()),
+                nullToEmpty(message.getBatchUuid()),
+                nullToEmpty(message.getSourceRoutingCode()),
+                nullToEmpty(message.getDestinationRoutingCode()),
+                nullToEmpty(message.getSourceAccountNumber()),
+                nullToEmpty(message.getDestinationAccountNumber()),
+                nullToEmpty(message.getOriginatorIdentification()),
+                nullToEmpty(message.getOriginatorName()),
+                nullToEmpty(message.getBeneficiaryIdentification()),
+                nullToEmpty(message.getBeneficiaryName()),
+                nullToEmpty(message.getBeneficiaryEmail()),
+                nullToEmpty(message.getConcept()),
+                message.getAmount() == null ? "" : message.getAmount().toPlainString(),
+                nullToEmpty(message.getCurrency()),
+                message.getAccountingDate() == null ? "" : message.getAccountingDate().toString());
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 no disponible", e);
+        }
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 }

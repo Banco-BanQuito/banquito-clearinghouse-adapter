@@ -59,14 +59,14 @@ class InterbankPaymentQueueListenerTest {
 
     @Test
     void receive_debeProcesarElPago_yHacerAck_cuandoElMensajeEsValido() throws Exception {
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId("002", "PICHINCHA-TX-1"))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid("11111111-1111-4111-8111-111111111111"))
                 .thenReturn(Optional.empty());
         when(inboundPaymentRepository.save(any(InboundPayment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(inboundCreditProvider.registerInboundCredit(any()))
                 .thenReturn(new InboundCreditResponse());
 
-        PubsubMessage pubsubMessage = toPubsubMessage(message("002", "PICHINCHA-TX-1"));
+        PubsubMessage pubsubMessage = toPubsubMessage(message("002", "11111111-1111-4111-8111-111111111111"));
         FakeAckReplyConsumer consumer = new FakeAckReplyConsumer();
 
         listener.receive(pubsubMessage, consumer);
@@ -91,10 +91,10 @@ class InterbankPaymentQueueListenerTest {
 
     @Test
     void receive_debeHacerNack_cuandoInboundPaymentServiceFallaInesperadamente() {
-        when(inboundPaymentRepository.findFirstByOriginBankCodeAndOriginTransactionId(any(), any()))
+        when(inboundPaymentRepository.findFirstByPaymentLineUuid(any()))
                 .thenThrow(new RuntimeException("Mongo no disponible"));
 
-        PubsubMessage pubsubMessage = toPubsubMessage(message("002", "PICHINCHA-TX-2"));
+        PubsubMessage pubsubMessage = toPubsubMessage(message("002", "22222222-2222-4222-8222-222222222222"));
         FakeAckReplyConsumer consumer = new FakeAckReplyConsumer();
 
         listener.receive(pubsubMessage, consumer);
@@ -114,17 +114,20 @@ class InterbankPaymentQueueListenerTest {
         }
     }
 
-    private InboundPaymentMessage message(String originBankCode, String originTransactionId) {
+    private InboundPaymentMessage message(String sourceRoutingCode, String paymentLineUuid) {
         InboundPaymentMessage message = new InboundPaymentMessage();
-        message.setUetr(UUID.randomUUID().toString());
-        message.setOriginBankCode(originBankCode);
-        message.setOriginTransactionId(originTransactionId);
+        message.setSourceTransferUuid(paymentLineUuid);
+        message.setPaymentLineUuid(paymentLineUuid);
+        message.setSourceRoutingCode(sourceRoutingCode);
+        message.setDestinationRoutingCode("BQTO001");
         message.setDestinationAccountNumber("2200000001");
+        message.setBeneficiaryIdentification("0102030405");
         message.setAmount(new BigDecimal("150.00"));
         message.setCurrency("USD");
         message.setConcept("Pago de proveedor");
         message.setBeneficiaryName("Juan Perez");
-        message.setValueDate(LocalDate.of(2026, 8, 1));
+        message.setAccountingDate(LocalDate.of(2026, 8, 1));
+        message.setCorrelationId(paymentLineUuid);
         return message;
     }
 
