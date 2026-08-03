@@ -111,6 +111,9 @@ public class ClearingBankProperties {
         private List<String> routingCodes = new ArrayList<>(List.of("003"));
         private String endpointUrl = "http://localhost:8090/api/v2/interbank/payments";
         private String bearerToken = "";
+        private String tokenUrl = "";
+        private String clientId = "";
+        private String clientSecret = "";
         private int timeoutSeconds = 10;
 
         public String getBankCode() {
@@ -143,6 +146,30 @@ public class ClearingBankProperties {
 
         public void setBearerToken(String bearerToken) {
             this.bearerToken = bearerToken;
+        }
+
+        public String getTokenUrl() {
+            return tokenUrl;
+        }
+
+        public void setTokenUrl(String tokenUrl) {
+            this.tokenUrl = tokenUrl;
+        }
+
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        public String getClientSecret() {
+            return clientSecret;
+        }
+
+        public void setClientSecret(String clientSecret) {
+            this.clientSecret = clientSecret;
         }
 
         public int getTimeoutSeconds() {

@@ -10,12 +10,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Parte 2, TAREA C: verificacion manual de que las credenciales GCP para Secret Manager
- * estan bien configuradas, sin esperar al primer pago real para descubrirlo (Parte 1,
- * BankCredentialResolver, sin consumidor de negocio todavia). Nunca expone el valor real
- * de ningun secreto, solo si la resolucion contra Secret Manager tuvo exito o no.
- */
 @RestController
 @RequestMapping("/api/v2/interbank/health")
 public class InterbankHealthController {

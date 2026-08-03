@@ -7,6 +7,7 @@ import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exceptio
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -24,10 +25,12 @@ public class Bank003Client implements ExternalBankClient {
 
     private final WebClient webClient;
     private final ClearingBankProperties properties;
+    private final Bank003TokenProvider tokenProvider;
 
-    public Bank003Client(WebClient webClient, ClearingBankProperties properties) {
+    public Bank003Client(WebClient webClient, ClearingBankProperties properties, Bank003TokenProvider tokenProvider) {
         this.webClient = webClient;
         this.properties = properties;
+        this.tokenProvider = tokenProvider;
     }
 
     @Override
@@ -38,28 +41,57 @@ public class Bank003Client implements ExternalBankClient {
     @Override
     public ExternalBankPaymentResponse send(ExternalBankPaymentRequest request) {
         ClearingBankProperties.Bank003 bank = properties.getBank003();
-        if (!hasText(bank.getBearerToken())) {
-            throw new ExternalBankRoutingException(
-                    "No se puede enviar el pago OFF-US al banco 003: falta configurar BANK003_BEARER_TOKEN");
-        }
         Bank003InterbankPaymentRequest payload = toInterbankRequest(request);
+        String token = resolveToken(bank);
         try {
-            Bank003InterbankPaymentResponse response = webClient.post()
-                    .uri(bank.getEndpointUrl())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + bank.getBearerToken())
-                    .bodyValue(payload)
-                    .retrieve()
-                    .bodyToMono(Bank003InterbankPaymentResponse.class)
-                    .block(Duration.ofSeconds(Math.max(1, bank.getTimeoutSeconds())));
-
-            return new ExternalBankPaymentResponse(
-                    bank.getBankCode(),
-                    response != null ? response.resolvedStatus() : "UNKNOWN",
-                    response != null ? response.resolvedReference(payload.uetr()) : payload.uetr(),
-                    response != null ? response.message() : null);
+            return doSend(bank, payload, token);
+        } catch (WebClientResponseException.Unauthorized e) {
+            tokenProvider.invalidate();
+            String retriedToken = resolveToken(bank);
+            try {
+                return doSend(bank, payload, retriedToken);
+            } catch (Exception retryFailure) {
+                throw new ExternalBankRoutingException("No se pudo enviar el pago OFF-US al banco 003", retryFailure);
+            }
         } catch (Exception e) {
             throw new ExternalBankRoutingException("No se pudo enviar el pago OFF-US al banco 003", e);
         }
+    }
+
+    private String resolveToken(ClearingBankProperties.Bank003 bank) {
+        if (hasText(bank.getTokenUrl())) {
+            return tokenProvider.getToken();
+        }
+        if (hasText(bank.getBearerToken())) {
+            return bank.getBearerToken();
+        }
+        throw new ExternalBankRoutingException(
+                "No se puede enviar el pago OFF-US al banco 003: falta configurar BANK003_TOKEN_URL "
+                        + "(OAuth2) o BANK003_BEARER_TOKEN");
+    }
+
+    private ExternalBankPaymentResponse doSend(ClearingBankProperties.Bank003 bank,
+                                                Bank003InterbankPaymentRequest payload,
+                                                String token) {
+        return webClient.post()
+                .uri(bank.getEndpointUrl())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .bodyValue(payload)
+                .retrieve()
+                .bodyToMono(Bank003InterbankPaymentResponse.class)
+                .map(response -> toPaymentResponse(bank, payload, response))
+                .defaultIfEmpty(toPaymentResponse(bank, payload, null))
+                .block(Duration.ofSeconds(Math.max(1, bank.getTimeoutSeconds())));
+    }
+
+    private ExternalBankPaymentResponse toPaymentResponse(ClearingBankProperties.Bank003 bank,
+                                                           Bank003InterbankPaymentRequest payload,
+                                                           Bank003InterbankPaymentResponse response) {
+        return new ExternalBankPaymentResponse(
+                bank.getBankCode(),
+                response != null ? response.resolvedStatus() : "UNKNOWN",
+                response != null ? response.resolvedReference(payload.uetr()) : payload.uetr(),
+                response != null ? response.message() : null);
     }
 
     private boolean hasText(String value) {

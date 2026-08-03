@@ -22,11 +22,16 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -102,7 +107,8 @@ class Bank003ClientTest {
     void send_debeFallarSiFaltaElBearerToken() {
         ClearingBankProperties properties = properties();
         properties.getBank003().setBearerToken("");
-        Bank003Client client = new Bank003Client(stubWebClient("{}"), properties);
+        Bank003Client client = new Bank003Client(
+                stubWebClient("{}"), properties, tokenProvider(stubWebClient("{}"), properties));
 
         assertThatThrownBy(() -> client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD")))
                 .isInstanceOf(ExternalBankRoutingException.class)
@@ -156,11 +162,157 @@ class Bank003ClientTest {
         WebClient webClient = WebClient.builder()
                 .exchangeFunction(req -> Mono.error(new IllegalStateException("conexion rechazada")))
                 .build();
-        Bank003Client client = new Bank003Client(webClient, properties);
+        Bank003Client client = new Bank003Client(webClient, properties, tokenProvider(webClient, properties));
 
         assertThatThrownBy(() -> client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD")))
                 .isInstanceOf(ExternalBankRoutingException.class)
                 .hasMessageContaining("No se pudo enviar el pago OFF-US al banco 003");
+    }
+
+    @Test
+    void send_debeUsarElTokenOAuth2CuandoHayTokenUrlConfigurada() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setBearerToken("");
+        properties.getBank003().setTokenUrl("http://banco003.test/oauth/token");
+        properties.getBank003().setClientId("switch-client");
+        properties.getBank003().setClientSecret("switch-secret");
+
+        WebClient paymentWebClient = stubWebClient("{\"status\":\"ACCEPTED\"}");
+        WebClient tokenWebClient = stubWebClient(
+                "{\"access_token\":\"oauth-token-1\",\"token_type\":\"Bearer\",\"expires_in\":3600}");
+        Bank003Client client = new Bank003Client(paymentWebClient, properties, tokenProvider(tokenWebClient, properties));
+
+        client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
+
+        assertThat(lastRequest.get().headers().getFirst(HttpHeaders.AUTHORIZATION))
+                .isEqualTo("Bearer oauth-token-1");
+    }
+
+    @Test
+    void send_debeReutilizarElTokenCacheadoEnLlamadasSucesivas() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setBearerToken("");
+        properties.getBank003().setTokenUrl("http://banco003.test/oauth/token");
+        properties.getBank003().setClientId("switch-client");
+        properties.getBank003().setClientSecret("switch-secret");
+
+        AtomicInteger tokenRequestCount = new AtomicInteger();
+        WebClient tokenWebClient = countingStubWebClient(
+                "{\"access_token\":\"oauth-token-1\",\"token_type\":\"Bearer\",\"expires_in\":3600}",
+                tokenRequestCount);
+        Bank003TokenProvider tokenProvider = tokenProvider(tokenWebClient, properties);
+        Bank003Client client = new Bank003Client(stubWebClient("{\"status\":\"ACCEPTED\"}"), properties, tokenProvider);
+
+        client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
+        client.send(request(UUID.randomUUID(), new BigDecimal("20.00"), "USD"));
+
+        assertThat(tokenRequestCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void tokenProvider_debeRenovarElTokenCuandoExpira() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setTokenUrl("http://banco003.test/oauth/token");
+        properties.getBank003().setClientId("switch-client");
+        properties.getBank003().setClientSecret("switch-secret");
+
+        AtomicInteger tokenRequestCount = new AtomicInteger();
+        AtomicReference<String> tokenToReturn = new AtomicReference<>(
+                "{\"access_token\":\"oauth-token-1\",\"token_type\":\"Bearer\",\"expires_in\":120}");
+        WebClient tokenWebClient = countingStubWebClient(() -> tokenToReturn.get(), tokenRequestCount);
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T10:00:00Z"));
+        Bank003TokenProvider tokenProvider = new Bank003TokenProvider(tokenWebClient, properties, clock);
+
+        String firstToken = tokenProvider.getToken();
+
+        clock.advanceSeconds(90);
+        tokenToReturn.set("{\"access_token\":\"oauth-token-2\",\"token_type\":\"Bearer\",\"expires_in\":120}");
+        String secondToken = tokenProvider.getToken();
+
+        assertThat(firstToken).isEqualTo("oauth-token-1");
+        assertThat(secondToken).isEqualTo("oauth-token-2");
+        assertThat(tokenRequestCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void tokenProvider_debeFallarConMensajeClaroSiFaltanCredenciales() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setTokenUrl("");
+        properties.getBank003().setClientId("");
+        properties.getBank003().setClientSecret("");
+        Bank003TokenProvider tokenProvider = tokenProvider(stubWebClient("{}"), properties);
+
+        assertThatThrownBy(tokenProvider::getToken)
+                .isInstanceOf(ExternalBankRoutingException.class)
+                .hasMessageContaining("BANK003_TOKEN_URL")
+                .hasMessageContaining("BANK003_CLIENT_ID")
+                .hasMessageContaining("BANK003_CLIENT_SECRET");
+    }
+
+    @Test
+    void send_debeReintentarUnaSolaVezSiElBanco003RespondeNoAutorizado() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setBearerToken("");
+        properties.getBank003().setTokenUrl("http://banco003.test/oauth/token");
+        properties.getBank003().setClientId("switch-client");
+        properties.getBank003().setClientSecret("switch-secret");
+
+        AtomicInteger tokenRequestCount = new AtomicInteger();
+        AtomicInteger paymentRequestCount = new AtomicInteger();
+        WebClient tokenWebClient = countingStubWebClient(
+                () -> "{\"access_token\":\"oauth-token-" + (tokenRequestCount.get() + 1)
+                        + "\",\"token_type\":\"Bearer\",\"expires_in\":3600}",
+                tokenRequestCount);
+        WebClient paymentWebClient = WebClient.builder()
+                .filter((request, next) -> {
+                    int attempt = paymentRequestCount.incrementAndGet();
+                    if (attempt == 1) {
+                        return Mono.just(ClientResponse.create(HttpStatus.UNAUTHORIZED).build());
+                    }
+                    return Mono.just(ClientResponse.create(HttpStatus.OK)
+                            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                            .body("{\"status\":\"ACCEPTED\"}")
+                            .build());
+                })
+                .build();
+        Bank003TokenProvider tokenProvider = tokenProvider(tokenWebClient, properties);
+        Bank003Client client = new Bank003Client(paymentWebClient, properties, tokenProvider);
+
+        ExternalBankPaymentResponse response = client.send(
+                request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
+
+        assertThat(response.status()).isEqualTo("ACCEPTED");
+        assertThat(paymentRequestCount.get()).isEqualTo(2);
+        assertThat(tokenRequestCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void send_noDebeReintentarMasDeUnaVezSiElBanco003SigueRespondiendoNoAutorizado() {
+        ClearingBankProperties properties = properties();
+        properties.getBank003().setBearerToken("");
+        properties.getBank003().setTokenUrl("http://banco003.test/oauth/token");
+        properties.getBank003().setClientId("switch-client");
+        properties.getBank003().setClientSecret("switch-secret");
+
+        AtomicInteger tokenRequestCount = new AtomicInteger();
+        AtomicInteger paymentRequestCount = new AtomicInteger();
+        WebClient tokenWebClient = countingStubWebClient(
+                "{\"access_token\":\"oauth-token\",\"token_type\":\"Bearer\",\"expires_in\":3600}",
+                tokenRequestCount);
+        WebClient paymentWebClient = WebClient.builder()
+                .filter((request, next) -> {
+                    paymentRequestCount.incrementAndGet();
+                    return Mono.just(ClientResponse.create(HttpStatus.UNAUTHORIZED).build());
+                })
+                .build();
+        Bank003TokenProvider tokenProvider = tokenProvider(tokenWebClient, properties);
+        Bank003Client client = new Bank003Client(paymentWebClient, properties, tokenProvider);
+
+        assertThatThrownBy(() -> client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD")))
+                .isInstanceOf(ExternalBankRoutingException.class)
+                .hasMessageContaining("No se pudo enviar el pago OFF-US al banco 003");
+        assertThat(paymentRequestCount.get()).isEqualTo(2);
+        assertThat(tokenRequestCount.get()).isEqualTo(2);
     }
 
     @Test
@@ -173,7 +325,9 @@ class Bank003ClientTest {
     }
 
     private Bank003Client client(String responseBody) {
-        return new Bank003Client(stubWebClient(responseBody), properties());
+        ClearingBankProperties properties = properties();
+        WebClient webClient = stubWebClient(responseBody);
+        return new Bank003Client(webClient, properties, tokenProvider(webClient, properties));
     }
 
     private ClearingBankProperties properties() {
@@ -181,6 +335,54 @@ class Bank003ClientTest {
         properties.getBank003().setBearerToken("token-de-prueba");
         properties.getBank003().setEndpointUrl("http://banco003.test/api/v2/interbank/payments");
         return properties;
+    }
+
+    private Bank003TokenProvider tokenProvider(WebClient webClient, ClearingBankProperties properties) {
+        return new Bank003TokenProvider(webClient, properties, Clock.fixed(Instant.parse("2026-08-03T10:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private WebClient countingStubWebClient(String responseBody, AtomicInteger requestCount) {
+        return countingStubWebClient(() -> responseBody, requestCount);
+    }
+
+    private WebClient countingStubWebClient(java.util.function.Supplier<String> responseBodySupplier,
+                                             AtomicInteger requestCount) {
+        return WebClient.builder()
+                .filter((request, next) -> {
+                    requestCount.incrementAndGet();
+                    return Mono.just(ClientResponse.create(HttpStatus.OK)
+                            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                            .body(responseBodySupplier.get())
+                            .build());
+                })
+                .build();
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        private MutableClock(Instant instant) {
+            this.instant = instant;
+        }
+
+        private void advanceSeconds(long seconds) {
+            this.instant = this.instant.plusSeconds(seconds);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 
     /**

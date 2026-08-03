@@ -17,10 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * Catalogo administrativo de conectividad interbancaria (dominio Switch).
- * Solo maneja routing/credenciales-de-referencia; no envia ni recibe pagos.
- */
 @RestController
 @RequestMapping("/api/v2/clearing/bank-connectivity")
 public class BankConnectivityController {

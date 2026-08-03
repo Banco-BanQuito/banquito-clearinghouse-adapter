@@ -22,13 +22,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Endpoint expuesto por BanQuito para que otro banco (ej. BanQuil) envie transferencias
- * Off-Us entrantes -- espejo, del lado receptor, del contrato descrito en
- * BanQuito_API_Interbancaria_R9K_BanQuill_v1.yaml (el mismo YAML describe el lado en que
- * BanQuil recibe de BanQuito bajo /api/v1/interbank/transfers/*; esta clase es la ruta
- * inversa, banco externo -> BanQuito).
- */
 @RestController
 @RequestMapping("/api/b2b/v2/interbank/payment")
 public class InterbankPaymentController {
