@@ -7,7 +7,7 @@ on:
 
 env:
   PROJECT_ID: project-47695a8e-7cb2-4352-af2
-  GKE_CLUSTER: banquito-cluster-east
+  GKE_CLUSTER: banquito-cluster-autopilot
   GKE_LOCATION: us-east1
   AR_LOCATION: us-central1
   AR_REPOSITORY: banquito
