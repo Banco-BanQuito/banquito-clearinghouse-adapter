@@ -13,15 +13,11 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.UUID;
 
-/**
- * ACL saliente hacia el banco 003: traduce ExternalBankPaymentRequest (dominio Switch)
- * al contrato de ellos (Bank003InterbankPaymentRequest) y su respuesta de vuelta a
- * ExternalBankPaymentResponse. El vocabulario del banco externo no cruza esta clase.
- */
 @Component
 public class Bank003Client implements ExternalBankClient {
 
     private static final String EXPECTED_CURRENCY = "USD";
+    private static final String CORRELATION_UUID_NAMESPACE = "BANK003-CORRELATION:";
 
     private final WebClient webClient;
     private final ClearingBankProperties properties;
@@ -53,6 +49,8 @@ public class Bank003Client implements ExternalBankClient {
             } catch (Exception retryFailure) {
                 throw new ExternalBankRoutingException("No se pudo enviar el pago OFF-US al banco 003", retryFailure);
             }
+        } catch (WebClientResponseException.UnprocessableEntity e) {
+            return toPaymentResponse(bank, payload, parseBody(e));
         } catch (Exception e) {
             throw new ExternalBankRoutingException("No se pudo enviar el pago OFF-US al banco 003", e);
         }
@@ -76,6 +74,9 @@ public class Bank003Client implements ExternalBankClient {
         return webClient.post()
                 .uri(bank.getEndpointUrl())
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .header("Idempotency-Key", payload.paymentLineUuid())
+                .header("X-Correlation-Id", payload.correlationId())
                 .bodyValue(payload)
                 .retrieve()
                 .bodyToMono(Bank003InterbankPaymentResponse.class)
@@ -84,13 +85,21 @@ public class Bank003Client implements ExternalBankClient {
                 .block(Duration.ofSeconds(Math.max(1, bank.getTimeoutSeconds())));
     }
 
+    private Bank003InterbankPaymentResponse parseBody(WebClientResponseException.UnprocessableEntity e) {
+        try {
+            return e.getResponseBodyAs(Bank003InterbankPaymentResponse.class);
+        } catch (Exception parseFailure) {
+            return null;
+        }
+    }
+
     private ExternalBankPaymentResponse toPaymentResponse(ClearingBankProperties.Bank003 bank,
                                                            Bank003InterbankPaymentRequest payload,
                                                            Bank003InterbankPaymentResponse response) {
         return new ExternalBankPaymentResponse(
                 bank.getBankCode(),
                 response != null ? response.resolvedStatus() : "UNKNOWN",
-                response != null ? response.resolvedReference(payload.uetr()) : payload.uetr(),
+                response != null ? response.resolvedReference(payload.paymentLineUuid()) : payload.paymentLineUuid(),
                 response != null ? response.message() : null);
     }
 
@@ -98,19 +107,8 @@ public class Bank003Client implements ExternalBankClient {
         return value != null && !value.isBlank();
     }
 
-    /**
-     * Traduccion dominio -> banco 003. Decisiones del ACL:
-     *   - uetr y originTransactionId toman ambos transactionId (paymentLineUuid, UUID
-     *     estable por linea de lote). Ellos exigen no reenviar el mismo pago con
-     *     identificadores distintos: al derivarlos de un id que ya es estable entre
-     *     reintentos, un reenvio del mismo pago llega con el mismo par y ellos lo
-     *     dedupean. Generar un UUID aqui romperia esa garantia.
-     *   - No se envia banco origen: nos identifican por credenciales.
-     *   - originAccount, beneficiaryIdentification y beneficiaryEmail existen en nuestro
-     *     dominio pero su contrato no los acepta; se descartan aqui a proposito.
-     */
     private Bank003InterbankPaymentRequest toInterbankRequest(ExternalBankPaymentRequest request) {
-        String uetr = requireUuidV4(request.transactionId());
+        String paymentLineUuid = requireUuidV4(request.transactionId());
         requirePositiveAmount(request.amount());
         requireExpectedCurrency(request.currency());
         if (!hasText(request.destinationAccount())) {
@@ -119,32 +117,45 @@ public class Bank003Client implements ExternalBankClient {
         }
         if (request.valueDate() == null) {
             throw new ExternalBankRoutingException(
-                    "El banco 003 exige valueDate: la linea de pago no trae fecha de valor");
+                    "El banco 003 exige accountingDate: la linea de pago no trae fecha de valor");
         }
 
         return new Bank003InterbankPaymentRequest(
-                uetr,
-                uetr,
+                paymentLineUuid,
+                paymentLineUuid,
+                request.batchId() != null ? request.batchId().toString() : null,
+                properties.getOwnRoutingCode(),
                 request.routingCode(),
+                request.originAccount(),
                 request.destinationAccount(),
+                null,
+                null,
+                request.beneficiaryIdentification(),
+                request.beneficiaryName(),
+                request.beneficiaryEmail(),
+                request.concept(),
                 request.amount(),
                 EXPECTED_CURRENCY,
-                request.concept(),
-                request.beneficiaryName(),
-                request.valueDate());
+                request.valueDate(),
+                deriveCorrelationId(request.transactionId()).toString());
     }
 
     private String requireUuidV4(UUID transactionId) {
         if (transactionId == null) {
             throw new ExternalBankRoutingException(
-                    "El banco 003 exige uetr: la linea de pago no trae transactionId");
+                    "El banco 003 exige paymentLineUuid: la linea de pago no trae transactionId");
         }
         if (transactionId.version() != 4) {
             throw new ExternalBankRoutingException(
-                    "El banco 003 exige que uetr sea UUID v4; transactionId " + transactionId
+                    "El banco 003 exige que paymentLineUuid sea UUID v4; transactionId " + transactionId
                             + " es version " + transactionId.version());
         }
         return transactionId.toString();
+    }
+
+    private UUID deriveCorrelationId(UUID transactionId) {
+        return UUID.nameUUIDFromBytes(
+                (CORRELATION_UUID_NAMESPACE + transactionId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private void requirePositiveAmount(BigDecimal amount) {
@@ -154,11 +165,6 @@ public class Bank003Client implements ExternalBankClient {
         }
     }
 
-    /**
-     * Ellos solo aceptan USD. Se falla antes de enviar en vez de reetiquetar la moneda:
-     * mandar un monto en otra divisa rotulado como USD acreditaria un valor incorrecto
-     * en el banco destino.
-     */
     private void requireExpectedCurrency(String currency) {
         if (currency != null && !EXPECTED_CURRENCY.equalsIgnoreCase(currency)) {
             throw new ExternalBankRoutingException(

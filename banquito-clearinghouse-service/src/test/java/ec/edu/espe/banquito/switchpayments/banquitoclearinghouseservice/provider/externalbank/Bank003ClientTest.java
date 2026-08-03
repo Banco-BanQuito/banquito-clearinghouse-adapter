@@ -46,61 +46,89 @@ class Bank003ClientTest {
 
     @Test
     void send_debeEnviarElContratoAcordadoConElBanco003() throws Exception {
-        Bank003Client client = client("{\"status\":\"ACCEPTED\",\"externalReference\":\"B3-999\"}");
+        Bank003Client client = client("{\"status\":\"SETTLED\",\"destinationTransactionUuid\":\"b3-999\"}");
         UUID transactionId = UUID.randomUUID();
 
         ExternalBankPaymentResponse response = client.send(request(transactionId, new BigDecimal("25.50"), "USD"));
 
         JsonNode sent = MAPPER.readTree(lastBody.get());
-        assertThat(sent.get("uetr").asText()).isEqualTo(transactionId.toString());
-        assertThat(sent.get("originTransactionId").asText()).isEqualTo(transactionId.toString());
-        assertThat(sent.get("routingCode").asText()).isEqualTo("003");
+        assertThat(sent.get("paymentLineUuid").asText()).isEqualTo(transactionId.toString());
+        assertThat(sent.get("sourceTransferUuid").asText()).isEqualTo(transactionId.toString());
+        assertThat(sent.get("sourceRoutingCode").asText()).isEqualTo("001");
+        assertThat(sent.get("destinationRoutingCode").asText()).isEqualTo("003");
         assertThat(sent.get("destinationAccountNumber").asText()).isEqualTo("2014146881");
         assertThat(sent.get("amount").decimalValue()).isEqualByComparingTo("25.50");
         assertThat(sent.get("currency").asText()).isEqualTo("USD");
         assertThat(sent.get("beneficiaryName").asText()).isEqualTo("Juan Perez");
-        assertThat(sent.get("valueDate").asText()).isEqualTo("2026-07-24");
+        assertThat(sent.get("accountingDate").asText()).isEqualTo("2026-07-24");
+        assertThat(sent.get("correlationId").asText()).isNotBlank();
 
-        assertThat(response.status()).isEqualTo("ACCEPTED");
-        assertThat(response.externalReference()).isEqualTo("B3-999");
+        assertThat(response.status()).isEqualTo("SETTLED");
+        assertThat(response.externalReference()).isEqualTo("b3-999");
     }
 
-    /**
-     * Su contrato no acepta estos campos; enviarlos de mas arriesga un 400 del lado de
-     * ellos. El ACL debe descartarlos, no reenviarlos "por si acaso".
-     */
     @Test
-    void send_noDebeEnviarCamposFueraDeSuContrato() throws Exception {
-        Bank003Client client = client("{\"status\":\"ACCEPTED\"}");
+    void send_debeEnviarLosHeadersDeIdempotenciaYCorrelacion() {
+        Bank003Client client = client("{\"status\":\"SETTLED\"}");
+        UUID transactionId = UUID.randomUUID();
 
-        client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
+        client.send(request(transactionId, new BigDecimal("10.00"), "USD"));
 
-        JsonNode sent = MAPPER.readTree(lastBody.get());
-        assertThat(sent.has("destinationType")).isFalse();
-        assertThat(sent.has("beneficiaryIdentification")).isFalse();
-        assertThat(sent.has("beneficiaryEmail")).isFalse();
-        assertThat(sent.has("paymentLineUuid")).isFalse();
-        assertThat(sent.has("accountingDate")).isFalse();
-        assertThat(sent.has("sourceRoutingCode")).isFalse();
+        assertThat(lastRequest.get().headers().getFirst("Idempotency-Key")).isEqualTo(transactionId.toString());
+        assertThat(lastRequest.get().headers().getFirst("X-Correlation-Id")).isNotBlank();
+    }
+
+    @Test
+    void send_debeUsarElMismoCorrelationIdEnReintentosDelMismoPago() {
+        Bank003Client client = client("{\"status\":\"SETTLED\"}");
+        UUID transactionId = UUID.randomUUID();
+
+        client.send(request(transactionId, new BigDecimal("10.00"), "USD"));
+        String firstCorrelationId = lastRequest.get().headers().getFirst("X-Correlation-Id");
+
+        client.send(request(transactionId, new BigDecimal("10.00"), "USD"));
+        String secondCorrelationId = lastRequest.get().headers().getFirst("X-Correlation-Id");
+
+        assertThat(secondCorrelationId).isEqualTo(firstCorrelationId);
     }
 
     @Test
     void send_debeUsarLaRutaInterbancariaAcordada() {
-        Bank003Client client = client("{\"status\":\"ACCEPTED\"}");
+        Bank003Client client = client("{\"status\":\"SETTLED\"}");
 
         client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
 
-        assertThat(lastRequest.get().url().getPath()).isEqualTo("/api/v2/interbank/payments");
+        assertThat(lastRequest.get().url().getPath()).isEqualTo("/api/b2b/v2/interbank/payment");
     }
 
     @Test
     void send_debeEnviarElBearerToken() {
-        Bank003Client client = client("{\"status\":\"ACCEPTED\"}");
+        Bank003Client client = client("{\"status\":\"SETTLED\"}");
 
         client.send(request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
 
         assertThat(lastRequest.get().headers().getFirst(HttpHeaders.AUTHORIZATION))
                 .isEqualTo("Bearer token-de-prueba");
+    }
+
+    @Test
+    void send_debeResolverRechazoFinancieroDefinitivoComoRespuestaDeNegocio() {
+        WebClient rejectingWebClient = WebClient.builder()
+                .filter((request, next) -> Mono.just(ClientResponse.create(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                        .body("{\"status\":\"REJECTED\",\"errorCode\":\"INTERBANK_DESTINATION_ACCOUNT_NOT_FOUND\","
+                                + "\"message\":\"La cuenta destino no existe\"}")
+                        .build()))
+                .build();
+        ClearingBankProperties properties = properties();
+        Bank003Client client = new Bank003Client(
+                rejectingWebClient, properties, tokenProvider(rejectingWebClient, properties));
+
+        ExternalBankPaymentResponse response = client.send(
+                request(UUID.randomUUID(), new BigDecimal("10.00"), "USD"));
+
+        assertThat(response.status()).isEqualTo("REJECTED");
+        assertThat(response.message()).isEqualTo("La cuenta destino no existe");
     }
 
     @Test
@@ -333,7 +361,7 @@ class Bank003ClientTest {
     private ClearingBankProperties properties() {
         ClearingBankProperties properties = new ClearingBankProperties();
         properties.getBank003().setBearerToken("token-de-prueba");
-        properties.getBank003().setEndpointUrl("http://banco003.test/api/v2/interbank/payments");
+        properties.getBank003().setEndpointUrl("http://banco003.test/api/b2b/v2/interbank/payment");
         return properties;
     }
 
