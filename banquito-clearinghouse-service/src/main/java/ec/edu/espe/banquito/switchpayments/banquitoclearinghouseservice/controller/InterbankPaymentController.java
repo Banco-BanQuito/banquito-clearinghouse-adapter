@@ -3,6 +3,7 @@ package ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.control
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankErrorResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentAckResponse;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.dto.InterbankPaymentRequest;
+import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentNotFoundException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.exception.InboundPaymentPayloadConflictException;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InboundPaymentService;
 import ec.edu.espe.banquito.switchpayments.banquitoclearinghouseservice.service.InterbankPaymentService;
@@ -46,25 +47,33 @@ public class InterbankPaymentController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader("X-Correlation-Id") String correlationId,
             @RequestBody InterbankPaymentRequest request) {
-        validate(request, idempotencyKey, correlationId);
         try {
+            validate(request, idempotencyKey, correlationId);
             InterbankPaymentAckResponse response = interbankPaymentService.receive(request);
             return ResponseEntity.status(HttpStatus.OK)
                     .header("Idempotency-Replayed", String.valueOf(response.idempotencyReplayed()))
                     .body(response);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(errorResponse(correlationId, "VALIDATION_ERROR", ex.getMessage()));
         } catch (InboundPaymentPayloadConflictException ex) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(new InterbankErrorResponse(
-                    LocalDateTime.now(),
-                    correlationId,
-                    "INTERBANK_IDEMPOTENCY_PAYLOAD_CONFLICT",
-                    ex.getMessage(),
-                    List.of()));
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(errorResponse(correlationId, "INTERBANK_IDEMPOTENCY_PAYLOAD_CONFLICT", ex.getMessage()));
         }
     }
 
     @GetMapping
-    public ResponseEntity<InterbankPaymentAckResponse> status(@RequestParam("paymentLineUuid") String paymentLineUuid) {
-        return ResponseEntity.ok(inboundPaymentService.getStatusByPaymentLineUuid(paymentLineUuid));
+    public ResponseEntity<Object> status(@RequestParam("paymentLineUuid") String paymentLineUuid) {
+        try {
+            return ResponseEntity.ok(inboundPaymentService.getStatusByPaymentLineUuid(paymentLineUuid));
+        } catch (InboundPaymentNotFoundException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(errorResponse(null, "INTERBANK_TRANSFER_NOT_FOUND", ex.getMessage()));
+        }
+    }
+
+    private InterbankErrorResponse errorResponse(String correlationId, String code, String message) {
+        return new InterbankErrorResponse(LocalDateTime.now(), correlationId, code, message, List.of());
     }
 
     private void validate(InterbankPaymentRequest request, String idempotencyKey, String correlationId) {
